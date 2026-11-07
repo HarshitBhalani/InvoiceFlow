@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { api, errMsg } from "@/lib/api";
 import { formatDate, money, useDebounce } from "@/lib/hooks";
 import { Modal, Pagination, StatusBadge, btnGhost, btnPrimary, inputCls } from "@/components/ui";
@@ -206,7 +207,12 @@ export default function InvoicesPage() {
               onClick={() => setForm({ ...form, items: [...form.items, blankItem()] })}>+ Add item</button>
 
             <p className="text-right text-sm font-semibold">Total: {money(formTotal)}</p>
-            {error && <p className="text-sm text-red-600">{error}</p>}
+            {error && (
+              <p className="text-sm text-red-600">
+                {error}{" "}
+                {error.includes("limit") && <Link href="/billing" className="font-semibold underline">Upgrade</Link>}
+              </p>
+            )}
             <div className="flex justify-end gap-2">
               <button type="button" className={btnGhost} onClick={() => setEditing(null)}>Cancel</button>
               <button className={btnPrimary} disabled={saving}>{saving ? "Saving..." : "Save"}</button>

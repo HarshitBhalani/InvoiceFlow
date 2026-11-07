@@ -4,6 +4,7 @@ const { z } = require("zod");
 const Client = require("../models/Client");
 const Invoice = require("../models/Invoice");
 const { requireAuth } = require("../middleware/auth");
+const { invoiceLimit } = require("../middleware/planLimit");
 const { paginate, escapeRegex } = require("../utils");
 
 const STATUSES = ["draft", "sent", "paid", "overdue"];
@@ -69,7 +70,7 @@ router.get("/:id", async (req, res, next) => {
   }
 });
 
-router.post("/", async (req, res, next) => {
+router.post("/", invoiceLimit, async (req, res, next) => {
   try {
     const data = schema.parse(req.body);
     const client = await Client.findOne({ _id: data.clientId, userId: req.user._id });
