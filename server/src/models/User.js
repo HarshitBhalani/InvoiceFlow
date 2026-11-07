@@ -8,6 +8,7 @@ const userSchema = new mongoose.Schema(
     role: { type: String, enum: ["user", "admin"], default: "user" },
     plan: { type: String, enum: ["free", "pro"], default: "free" },
     stripeCustomerId: String,
+    banned: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

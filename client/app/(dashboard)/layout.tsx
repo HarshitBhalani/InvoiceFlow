@@ -39,7 +39,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <aside className="border-b bg-white p-4 md:min-h-screen md:w-56 md:border-b-0 md:border-r">
           <h2 className="mb-4 text-lg font-bold text-indigo-600">InvoiceFlow</h2>
           <nav className="flex gap-2 md:flex-col">
-            {links.map((l) => (
+            {(user.role === "admin" ? [...links, { href: "/admin", label: "Admin" }] : links).map((l) => (
               <Link
                 key={l.href}
                 href={l.href}

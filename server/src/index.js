@@ -23,6 +23,7 @@ app.use("/api/clients", require("./routes/clients"));
 app.use("/api/invoices", require("./routes/invoices"));
 app.use("/api/dashboard", require("./routes/dashboard"));
 app.use("/api/billing", require("./routes/billing"));
+app.use("/api/admin", require("./routes/admin"));
 
 app.use((err, req, res, next) => {
   if (err instanceof ZodError) {
