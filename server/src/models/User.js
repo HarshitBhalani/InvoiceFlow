@@ -33,6 +33,14 @@ const userSchema = new mongoose.Schema(
     resetTokenHash: { type: String, select: false },
     resetExpires: { type: Date, select: false },
     passwordChangedAt: Date, // tokens issued before this moment are rejected
+
+    // The first-run product tour opens once; after it is finished or skipped this stays true (accounts that
+    // existed before the tour was added have no value, which counts as "not seen yet")
+    tourDone: { type: Boolean, default: false },
+
+    // Temporary "Try the demo account" workspaces (see lib/demoData.js)
+    isDemo: { type: Boolean, default: false },
+    demoExpiresAt: { type: Date, index: true },
   },
   { timestamps: true }
 );

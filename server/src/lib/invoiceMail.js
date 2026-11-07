@@ -6,6 +6,11 @@ const fmtDate = (d) => new Date(d).toLocaleDateString("en-US", { dateStyle: "med
 // Sends the invoice (or a payment reminder) to the client with a link to the public invoice page.
 // `invoice` must be a Mongoose document; `client` and `seller` are plain documents.
 async function emailInvoice({ invoice, client, seller, message = "", kind = "invoice" }) {
+  if (seller.isDemo) {
+    const err = new Error("Emails are disabled for demo accounts");
+    err.status = 403;
+    throw err;
+  }
   const token = await ensurePublicToken(invoice);
   const url = `${clientUrl()}/i/${token}`;
   const from = seller.businessName || seller.name;

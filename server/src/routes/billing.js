@@ -2,7 +2,7 @@ const router = require("express").Router();
 const getStripe = require("../config/stripe");
 const Invoice = require("../models/Invoice");
 const Subscription = require("../models/Subscription");
-const { requireAuth } = require("../middleware/auth");
+const { requireAuth, blockDemo } = require("../middleware/auth");
 const { FREE_LIMIT } = require("../middleware/planLimit");
 const { syncSubscription } = require("../lib/stripeSync");
 const User = require("../models/User");
@@ -59,7 +59,7 @@ router.get("/status", async (req, res, next) => {
 // Called right after returning from Checkout (and by a "refresh" button), so the plan updates
 // even if the webhook is late, failed, or not running (e.g. local development).
 // Safe: it only reads the Stripe customer that belongs to the logged-in user.
-router.post("/sync", async (req, res, next) => {
+router.post("/sync", blockDemo("Billing"), async (req, res, next) => {
   try {
     if (req.user.stripeCustomerId) {
       try {
@@ -77,7 +77,7 @@ router.post("/sync", async (req, res, next) => {
   }
 });
 
-router.post("/checkout", async (req, res, next) => {
+router.post("/checkout", blockDemo("Billing"), async (req, res, next) => {
   try {
     if (req.user.plan === "pro") return res.status(400).json({ error: "You are already on Pro" });
     if (!process.env.STRIPE_PRO_PRICE_ID) return res.status(503).json({ error: "Stripe price is not configured" });
@@ -99,7 +99,7 @@ router.post("/checkout", async (req, res, next) => {
 });
 
 // Stripe-hosted page to update card, cancel, view invoices
-router.post("/portal", async (req, res, next) => {
+router.post("/portal", blockDemo("Billing"), async (req, res, next) => {
   try {
     if (!req.user.stripeCustomerId) return res.status(400).json({ error: "No billing account yet" });
     const session = await getStripe().billingPortal.sessions.create({

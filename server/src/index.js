@@ -118,6 +118,11 @@ app.post(
   byEmail({ name: "login", limit: 10, windowMs: 15 * 60 * 1000, skipSuccessfulRequests: true, message: "Too many failed attempts for this account. Try again in 15 minutes." }),
   authLimiter
 );
+// Each demo click creates about 40 database documents, so it is limited per IP
+app.post(
+  "/api/auth/demo",
+  rateLimit({ windowMs: 60 * 60 * 1000, limit: 10, keyGenerator: ipKey, standardHeaders: true, legacyHeaders: false, message: { error: "You have opened a lot of demos. Please wait a while or create a free account." } })
+);
 app.post(
   "/api/auth/signup",
   rateLimit({ windowMs: 60 * 60 * 1000, limit: 10, keyGenerator: ipKey, standardHeaders: true, legacyHeaders: false, message: { error: "Too many accounts created from this network. Try again later." } }),

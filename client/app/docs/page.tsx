@@ -62,6 +62,7 @@ const sections: Section[] = [
           ]}
         />
         <Note>Want to look around first? Use <b>Try the demo account</b> on the login page. It comes with sample data.</Note>
+        <p>The first time you sign in, a short product tour shows you where everything is. You can replay it any time from your profile menu, under <b>Product tour</b>.</p>
       </>
     ),
   },

@@ -6,6 +6,7 @@ const User = require("../models/User");
 const Client = require("../models/Client");
 const { createInvoice, addInterval, calcTotals } = require("./invoiceService");
 const { emailInvoice } = require("./invoiceMail");
+const { deleteExpiredDemos } = require("./demoData");
 
 const DAY = 864e5;
 
@@ -15,7 +16,7 @@ async function runRecurring(now = new Date()) {
 
   for (const tpl of templates) {
     const user = await User.findById(tpl.userId);
-    if (!user || user.banned || user.plan !== "pro") {
+    if (!user || user.banned || user.plan !== "pro" || user.isDemo) {
       // Recurring billing is a Pro feature: stop it if the user is gone or downgraded
       await Invoice.updateOne({ _id: tpl._id }, { $set: { "recurring.active": false } });
       continue;
@@ -65,7 +66,7 @@ const REMINDER_EVERY_DAYS = 7;
 const MAX_REMINDERS = 3;
 
 async function runReminders(now = new Date()) {
-  const users = await User.find({ autoReminders: true, plan: "pro", banned: { $ne: true } }).limit(1000);
+  const users = await User.find({ autoReminders: true, plan: "pro", banned: { $ne: true }, isDemo: { $ne: true } }).limit(1000);
   let sent = 0;
 
   for (const user of users) {
@@ -101,7 +102,7 @@ async function runReminders(now = new Date()) {
 }
 
 async function runAll() {
-  const out = { recurringCreated: 0, remindersSent: 0 };
+  const out = { recurringCreated: 0, remindersSent: 0, demosDeleted: 0 };
   try {
     out.recurringCreated = await runRecurring();
   } catch (e) {
@@ -111,6 +112,11 @@ async function runAll() {
     out.remindersSent = await runReminders();
   } catch (e) {
     console.error("Reminder job failed:", e);
+  }
+  try {
+    out.demosDeleted = await deleteExpiredDemos();
+  } catch (e) {
+    console.error("Demo cleanup failed:", e);
   }
   return out;
 }

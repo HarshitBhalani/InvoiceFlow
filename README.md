@@ -5,7 +5,7 @@
 > Built as a complete, production-style SaaS project: authentication, subscription billing, online payments, background jobs, an admin panel and a security-hardened API.
 
 **Live demo:** _add Vercel URL_  
-**Demo login:** `demo@invoiceflow.com` / `demo1234` (Pro plan, pre-filled data)  
+**Demo:** the **Try the demo account** button on the login page opens a private, temporary workspace with sample data (Pro features, but emails and payments are switched off; it is deleted after 24 hours). No seed script or shared password needed.  
 **Walkthrough video:** _add Loom link_
 
 > Stripe runs in **test mode**. Use card `4242 4242 4242 4242`, any future expiry date, any CVC. Nothing is ever charged.
@@ -72,6 +72,7 @@ It is also a reference for how a real SaaS is put together end to end (auth, pay
 **Interface**
 - Landing page, **light, dark and system theme**, responsive layout (tables become cards on phones)
 - Toasts, confirm dialogs, skeleton loaders, empty and error states with retry
+- A short first-run product tour (shown once per account, once per browser for the demo; replay from the profile menu)
 - Forms with inline validation, tooltip error messages, focus on the first invalid field, show / hide password
 
 ---
@@ -153,7 +154,7 @@ When you eventually go live: use a **separate MongoDB database**, create the pro
 | `EMAIL_FROM` | no | Sender, e.g. `InvoiceFlow <noreply@yourdomain.com>`. Resend's default sender can only email your own address until you verify a domain |
 | `CRON_SECRET` | for jobs | Secret for `POST /api/cron/run` |
 | `DISABLE_INTERNAL_JOBS` | no | `true` to turn off the hourly in-process job timer |
-| `SEED_ADMIN_PASSWORD` | no | Admin password used by `npm run seed` (random if unset) |
+| `SEED_ADMIN_PASSWORD` | no | Admin password used by `npm run seed` (random if unset). Use `--admin-only` to skip the sample users |
 | `PROXY_SECRET` | prod | Shared secret with the Vercel `/api` proxy (use the **same value** on Vercel). Without it all visitors behind Vercel share one rate limit |
 | `COOKIE_SAMESITE` | no | Set `none` only if the browser calls the API on a different domain directly |
 
@@ -218,7 +219,7 @@ InvoiceFlow/
 4. **Stripe:** add a webhook endpoint `https://<render-url>/api/webhooks/stripe` for `checkout.session.completed`, `checkout.session.async_payment_succeeded` and `customer.subscription.created / updated / deleted`. Put its signing secret in Render as `STRIPE_WEBHOOK_SECRET`.
 5. **Email:** add `RESEND_API_KEY`, and verify your domain in Resend so you can email clients.
 6. **Background jobs on a sleeping host (Render free tier):** the server runs jobs hourly in-process, but a sleeping server cannot. On cron-job.org create a job that sends `POST https://<render-url>/api/cron/run` every hour with the header `x-cron-secret: <CRON_SECRET>`. This also keeps the API awake.
-7. **Demo data:** run `npm run seed -- --force` once against production (it only touches its own seed accounts).
+7. **Admin account (optional):** run `SEED_ADMIN_PASSWORD=<your password> npm run seed -- --force --admin-only` once against production, or set `role` to `admin` on your own user in Atlas. The demo button needs no seeding.
 
 Render's free tier sleeps after inactivity, so the first request can take around 30 seconds.
 

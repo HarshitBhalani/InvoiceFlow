@@ -13,7 +13,7 @@ const PRO_PRICE = () => parseFloat(process.env.PRO_PRICE_USD) || 19;
 router.get("/users", async (req, res, next) => {
   try {
     const { page, limit, skip } = paginate(req.query);
-    const filter = {};
+    const filter = { isDemo: { $ne: true } };
     if (["free", "pro"].includes(req.query.plan)) filter.plan = req.query.plan;
     if (req.query.search) {
       const rx = new RegExp(escapeRegex(String(req.query.search)), "i");
@@ -51,9 +51,9 @@ router.get("/stats", async (req, res, next) => {
     const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (MONTHS - 1), 1));
 
     const [plans, signups] = await Promise.all([
-      User.aggregate([{ $group: { _id: "$plan", count: { $sum: 1 } } }]),
+      User.aggregate([{ $match: { isDemo: { $ne: true } } }, { $group: { _id: "$plan", count: { $sum: 1 } } }]),
       User.aggregate([
-        { $match: { createdAt: { $gte: start } } },
+        { $match: { createdAt: { $gte: start }, isDemo: { $ne: true } } },
         { $group: { _id: { y: { $year: "$createdAt" }, m: { $month: "$createdAt" } }, signups: { $sum: 1 } } },
       ]),
     ]);

@@ -6,7 +6,7 @@ const Client = require("../models/Client");
 const Invoice = require("../models/Invoice");
 const User = require("../models/User");
 const { FREQUENCIES } = require("../models/Invoice");
-const { requireAuth } = require("../middleware/auth");
+const { requireAuth, blockDemo } = require("../middleware/auth");
 const { invoiceLimit } = require("../middleware/planLimit");
 const { paginate, escapeRegex } = require("../utils");
 const { calcTotals, createInvoice, ensurePublicToken, addInterval } = require("../lib/invoiceService");
@@ -249,7 +249,7 @@ router.patch("/:id/status", async (req, res, next) => {
 });
 
 // Email the invoice to the client with a public link where they can view and pay it
-router.post("/:id/send", sendLimiter, async (req, res, next) => {
+router.post("/:id/send", blockDemo("Emailing invoices"), sendLimiter, async (req, res, next) => {
   try {
     if (!validId(req.params.id)) return notFound(res);
     const { message } = z.object({ message: z.string().trim().max(1000, "Message is too long (max 1000 characters)").default("") }).parse(req.body ?? {});
@@ -273,7 +273,7 @@ router.post("/:id/send", sendLimiter, async (req, res, next) => {
 });
 
 // Just the shareable link (no email), for copy / WhatsApp / etc.
-router.post("/:id/link", async (req, res, next) => {
+router.post("/:id/link", blockDemo("Shareable payment links"), async (req, res, next) => {
   try {
     if (!validId(req.params.id)) return notFound(res);
     const invoice = await Invoice.findOne({ _id: req.params.id, userId: req.user._id });
@@ -286,7 +286,7 @@ router.post("/:id/link", async (req, res, next) => {
 });
 
 // Recurring billing (Pro): this invoice becomes the template for future copies
-router.put("/:id/recurring", async (req, res, next) => {
+router.put("/:id/recurring", blockDemo("Recurring invoices"), async (req, res, next) => {
   try {
     if (!validId(req.params.id)) return notFound(res);
     const body = z

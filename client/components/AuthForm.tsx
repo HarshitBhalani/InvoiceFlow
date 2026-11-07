@@ -9,8 +9,6 @@ import { Alert, Button, PasswordField, TextField, focusFirstInvalid } from "@/co
 type Fields = { name: string; email: string; password: string };
 type Errors = Partial<Record<keyof Fields, string>>;
 
-const DEMO = { email: "demo@invoiceflow.com", password: "demo1234" };
-
 function validate(mode: "login" | "signup", f: Fields): Errors {
   const e: Errors = {};
   if (mode === "signup" && f.name.trim().length < 2) e.name = "Enter your name (at least 2 characters)";
@@ -35,6 +33,26 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const [demoLoading, setDemoLoading] = useState(false);
 
   // Already logged in? Skip the form.
+  // Next.js keeps a visited page alive in the background and shows it again with its OLD state when you come back.
+  // After logging out that meant a spinner stuck on the demo button and the previously typed password still in the form.
+  // So the form starts clean every time this page appears (effects run again when a hidden page becomes visible),
+  // and also when the browser restores it with the Back button.
+  useEffect(() => {
+    const reset = () => {
+      setForm({ name: "", email: "", password: "" });
+      setErrors({});
+      setFormError("");
+      setLoading(false);
+      setDemoLoading(false);
+    };
+    reset();
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) reset();
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, []);
+
   useEffect(() => {
     api("/auth/me")
       .then(() => router.replace("/dashboard"))
@@ -51,7 +69,9 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
     setBusy(true);
     try {
       await api(path, { method: "POST", body: JSON.stringify(body) });
-      router.replace("/dashboard");
+      // Full page load on purpose: it wipes everything in memory from any previous account (see the note above)
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+      window.location.assign("/dashboard");
     } catch (err) {
       setFormError(errMsg(err));
       setBusy(false); // keep the button disabled while redirecting; re-enable only on failure
@@ -127,10 +147,11 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
             className="w-full"
             loading={demoLoading}
             disabled={loading}
-            onClick={() => submit("/auth/login", DEMO, setDemoLoading)}
+            onClick={() => submit("/auth/demo", {}, setDemoLoading)}
           >
             Try the demo account
           </Button>
+          <p className="mt-2 text-center text-xs text-muted">A private workspace with sample data. No sign-up needed.</p>
         </>
       )}
 

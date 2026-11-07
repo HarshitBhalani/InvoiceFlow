@@ -28,5 +28,11 @@ exports.requireAuth = async (req, res, next) => {
   }
 };
 
+// Demo accounts can look around, but must not cause anything outward-facing: no emails, no payments, no share links.
+exports.blockDemo = (what) => (req, res, next) =>
+  req.user?.isDemo
+    ? res.status(403).json({ error: `${what} is not available in the demo. Create a free account to use it.`, code: "DEMO_MODE" })
+    : next();
+
 exports.requireRole = (role) => (req, res, next) =>
   req.user?.role === role ? next() : res.status(403).json({ error: "You do not have access to this" });

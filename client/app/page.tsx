@@ -22,7 +22,7 @@ const faqs = [
   { q: "Is it really free?", a: "Yes. The Free plan includes up to 5 invoices with every feature. Upgrade to Pro for unlimited invoices." },
   { q: "Can I cancel Pro any time?", a: "Yes. Manage or cancel your subscription from the billing page. You keep Pro until the end of the paid period." },
   { q: "Is my data safe?", a: "Each account only ever sees its own clients and invoices. Payments are handled by Stripe, so we never see your card details." },
-  { q: "Can I try it without signing up?", a: "Yes. Use the demo account on the login page to look around with sample data." },
+  { q: "Can I try it without signing up?", a: "Yes. Use Try the demo account on the login page. It opens a private workspace with sample data. Emails and payments are switched off, and it is deleted after 24 hours." },
 ];
 
 export default function Home() {
@@ -49,11 +49,15 @@ export default function Home() {
       <main>
         {/* Hero */}
         <section className="mx-auto max-w-6xl px-4 pb-16 pt-16 text-center md:pt-24">
-          <span className="inline-flex items-center gap-2 rounded-full bg-primary-soft px-3 py-1 text-xs font-medium text-primary">
-            <Icon name="sparkles" className="h-3.5 w-3.5" /> Free for your first 5 invoices
-          </span>
-          <h1 className="mx-auto mt-5 max-w-3xl text-4xl font-bold tracking-tight md:text-6xl">
-            Invoicing that gets you <span className="text-primary">paid faster</span>
+          <h1 className="mx-auto max-w-3xl text-4xl font-bold tracking-tight md:text-6xl">
+            Invoicing that gets you{" "}
+            <span className="relative inline-block text-primary">
+              paid faster
+              {/* hand-drawn underline doodle */}
+              <svg aria-hidden="true" viewBox="0 0 200 12" preserveAspectRatio="none" className="absolute -bottom-2 left-0 h-2.5 w-full" fill="none">
+                <path d="M2 8 C 25 2, 50 11, 80 6 S 130 3, 160 8 S 190 6, 198 5" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" />
+              </svg>
+            </span>
           </h1>
           <p className="mx-auto mt-5 max-w-xl text-lg text-muted">
             Create clean invoices, track who has paid and see your revenue in one simple dashboard. Built for freelancers and small teams.
@@ -66,6 +70,12 @@ export default function Home() {
               Try the demo
             </Link>
           </div>
+          <p className="mt-4 inline-flex items-center gap-2 text-sm text-muted">
+            <svg aria-hidden="true" viewBox="0 0 36 28" className="h-6 w-8 -rotate-6 text-primary" fill="none">
+              <path d="M3 24 C 14 26, 26 20, 30 5 M30 5 L22 9 M30 5 L33 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span className="italic">No credit card needed</span>
+          </p>
 
           {/* Static product preview */}
           <div className="mx-auto mt-14 max-w-4xl rounded-2xl border border-line bg-surface p-4 text-left shadow-xl md:p-6" aria-hidden="true">

@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
 import { Icon, type IconName } from "./Icon";
 import { initials } from "@/lib/format";
+import { placeTooltip, type Anchor } from "@/lib/placement";
 
 export const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 
@@ -52,29 +53,29 @@ export function Button({
 }
 
 /* ---------- Tooltip ---------- */
-// Rendered in a portal with fixed positioning, so it is never clipped by overflow-hidden cards or tables,
-// flips below the element near the top of the screen, and is nudged back inside the viewport at the sides.
-function TooltipBubble({ id, text, x, y, below }: { id: string; text: string; x: number; y: number; below: boolean }) {
+// Rendered in a portal with fixed positioning, so it is never clipped by overflow-hidden cards or tables.
+// Position comes from placeTooltip (lib/placement.ts): centred on the element, flipped below near the top of the
+// screen, and kept inside the viewport at the sides. It is measured while hidden and only then shown, and it uses
+// plain left/top (no transform), so the measurement can never be thrown off by an animation.
+function TooltipBubble({ id, text, anchor }: { id: string; text: string; anchor: Anchor }) {
   const ref = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const r = el.getBoundingClientRect();
-    const margin = 8;
-    let dx = 0;
-    if (r.left < margin) dx = margin - r.left;
-    else if (r.right > window.innerWidth - margin) dx = window.innerWidth - margin - r.right;
-    if (dx) el.style.left = `${x + dx}px`;
-  }, [x, text]);
+    const { left, top } = placeTooltip(anchor, { w: el.offsetWidth, h: el.offsetHeight }, document.documentElement.clientWidth);
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+    el.style.visibility = "visible";
+  }, [anchor, text]);
 
   return (
     <div
       ref={ref}
       id={id}
       role="tooltip"
-      style={{ left: x, top: y, transform: below ? "translateX(-50%)" : "translate(-50%, -100%)" }}
-      className="animate-toast-in pointer-events-none fixed z-[100] w-max max-w-[min(15rem,calc(100vw-1rem))] rounded-md bg-fg px-2.5 py-1.5 text-xs font-medium text-bg shadow-lg"
+      style={{ left: 0, top: 0, visibility: "hidden" }}
+      className="animate-fade-in pointer-events-none fixed z-[100] w-max max-w-[min(15rem,calc(100vw-1rem))] rounded-md bg-fg px-2.5 py-1.5 text-xs font-medium text-bg shadow-lg"
     >
       {text}
     </div>
@@ -84,20 +85,19 @@ function TooltipBubble({ id, text, x, y, below }: { id: string; text: string; x:
 export function Tooltip({ text, children, className }: { text: string; children: ReactNode; className?: string }) {
   const id = useId();
   const ref = useRef<HTMLSpanElement>(null);
-  const [pos, setPos] = useState<{ x: number; y: number; below: boolean } | null>(null);
+  const [anchor, setAnchor] = useState<Anchor | null>(null);
 
   const show = () => {
     const el = ref.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    const below = r.top < 56; // not enough room above (e.g. buttons in the top bar): open underneath
-    setPos({ x: r.left + r.width / 2, y: below ? r.bottom + 8 : r.top - 8, below });
+    setAnchor({ x: r.left + r.width / 2, top: r.top, bottom: r.bottom });
   };
 
   // A tooltip that is open while the page scrolls or resizes would point at the wrong place: close it
   useEffect(() => {
-    if (!pos) return;
-    const close = () => setPos(null);
+    if (!anchor) return;
+    const close = () => setAnchor(null);
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
     window.addEventListener("scroll", close, true);
     window.addEventListener("resize", close);
@@ -107,20 +107,20 @@ export function Tooltip({ text, children, className }: { text: string; children:
       window.removeEventListener("resize", close);
       document.removeEventListener("keydown", onKey);
     };
-  }, [pos]);
+  }, [anchor]);
 
   return (
     <span
       ref={ref}
       className={cx("relative inline-flex", className)}
       onMouseEnter={show}
-      onMouseLeave={() => setPos(null)}
+      onMouseLeave={() => setAnchor(null)}
       onFocus={show}
-      onBlur={() => setPos(null)}
-      aria-describedby={pos ? id : undefined}
+      onBlur={() => setAnchor(null)}
+      aria-describedby={anchor ? id : undefined}
     >
       {children}
-      {pos && createPortal(<TooltipBubble id={id} text={text} {...pos} />, document.body)}
+      {anchor && createPortal(<TooltipBubble id={id} text={text} anchor={anchor} />, document.body)}
     </span>
   );
 }

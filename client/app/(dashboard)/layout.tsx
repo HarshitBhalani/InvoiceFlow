@@ -1,9 +1,11 @@
 "use client";
 import { Suspense, createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { api, ApiError } from "@/lib/api";
 import { Icon, type IconName } from "@/components/Icon";
+import { ProductTour } from "@/components/ProductTour";
+import { shouldAutoShowTour, tourKey, tourSteps } from "@/lib/tour";
 import { Logo, ThemeToggle } from "@/components/ThemeToggle";
 import { Avatar, Button, ErrorState, IconButton, Skeleton, cx } from "@/components/ui";
 
@@ -22,6 +24,8 @@ export type User = {
   defaultTaxRate: number;
   autoReminders: boolean;
   emailVerified: boolean;
+  isDemo: boolean;
+  tourDone: boolean;
 };
 export type Billing = {
   stripeMode?: "test" | "live" | null; // which Stripe world the server talks to
@@ -49,6 +53,33 @@ const nav: { href: string; label: string; icon: IconName }[] = [
   { href: "/billing", label: "Billing", icon: "creditCard" },
   { href: "/settings", label: "Settings", icon: "user" },
 ];
+
+function DemoBanner() {
+  const [busy, setBusy] = useState(false);
+
+  // A demo visitor who wants a real account must be logged out first, otherwise /signup would bounce them back here
+  async function goSignup() {
+    setBusy(true);
+    try {
+      await api("/auth/logout", { method: "POST" });
+    } finally {
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+      window.location.assign("/signup"); // full load: nothing from the demo stays in memory
+    }
+  }
+
+  return (
+    <div role="status" className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-info-soft px-4 py-3 text-sm text-info print:hidden">
+      <span className="flex items-center gap-2">
+        <Icon name="info" />
+        You are in a demo workspace with sample data. Emails and payments are turned off, and it is deleted after 24 hours.
+      </span>
+      <Button size="sm" loading={busy} onClick={goSignup}>
+        Create a free account
+      </Button>
+    </div>
+  );
+}
 
 function VerifyBanner({ email, onDone }: { email: string; onDone: () => void }) {
   const [state, setState] = useState<"idle" | "sending" | "sent">("idle");
@@ -111,13 +142,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
   const pathname = usePathname();
   const [user, setUser] = useState<User | null>(null);
   const [billing, setBilling] = useState<Billing | null>(null);
   const [loadError, setLoadError] = useState("");
   const [drawer, setDrawer] = useState(false);
   const [menu, setMenu] = useState(false);
+  const [tourOpen, setTourOpen] = useState(false);
+  const [compactTour, setCompactTour] = useState(false);
+  const tourShownFor = useRef<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const loadUser = useCallback(() => {
@@ -127,16 +160,53 @@ function Shell({ children }: { children: React.ReactNode }) {
       .catch((e) => {
         // Logged out -> login page. Anything else (server down, network) -> a retry screen, not a logout.
         if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
-          router.replace(e.status === 401 ? "/login?session=expired" : "/login");
+          window.location.replace(e.status === 401 ? "/login?session=expired" : "/login");
         } else setLoadError(e instanceof Error ? e.message : "Could not load your account");
       });
-  }, [router]);
+  }, []);
 
   const refreshUser = useCallback(() => {
     api<{ user: User }>("/auth/me")
       .then((d) => setUser(d.user))
       .catch(() => {});
   }, []);
+
+  const openTour = useCallback(() => {
+    setCompactTour(window.matchMedia("(max-width: 767px)").matches); // phones have no sidebar to point at
+    setTourOpen(true);
+  }, []);
+
+  // Finishing and skipping both count as "seen": remember it on the server (so it follows the account to every
+  // device) and in this browser (the demo, and a fallback if the save fails).
+  const closeTour = useCallback(() => {
+    setTourOpen(false);
+    if (!user) return;
+    try {
+      window.localStorage.setItem(tourKey(user), "1");
+    } catch {
+      /* storage blocked: the server flag still covers real accounts */
+    }
+    api("/auth/tour-done", { method: "POST" })
+      .then(refreshUser)
+      .catch(() => {});
+  }, [user, refreshUser]);
+
+  // First visit only: open the tour once, shortly after the page has settled
+  useEffect(() => {
+    if (!user || tourShownFor.current === user.id) return;
+    let storage: Storage | null = null;
+    try {
+      storage = window.localStorage;
+    } catch {
+      /* ignore */
+    }
+    if (!shouldAutoShowTour(user, storage)) return;
+    const t = setTimeout(() => {
+      tourShownFor.current = user.id;
+      openTour();
+    }, 700);
+    return () => clearTimeout(t);
+  }, [user, openTour]);
 
   const refreshBilling = useCallback(() => {
     api<Billing>("/billing/status")
@@ -172,7 +242,10 @@ function Shell({ children }: { children: React.ReactNode }) {
     try {
       await api("/auth/logout", { method: "POST" });
     } finally {
-      router.replace("/login");
+      // Full page load instead of a client-side navigation: Next.js would keep this account's pages alive in the
+      // background, and the next person to log in on this computer could briefly see them.
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+      window.location.assign("/login");
     }
   }
 
@@ -202,6 +275,7 @@ function Shell({ children }: { children: React.ReactNode }) {
             key={l.href}
             href={l.href}
             aria-current={isActive(l.href) ? "page" : undefined}
+            data-tour={`nav-${l.href.slice(1)}`}
             className={cx(
               "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
               isActive(l.href) ? "bg-primary-soft text-primary" : "text-muted hover:bg-surface-2 hover:text-fg"
@@ -265,6 +339,7 @@ function Shell({ children }: { children: React.ReactNode }) {
               <div className="relative" ref={menuRef}>
                 <button
                   onClick={() => setMenu(!menu)}
+                  data-tour="user-menu"
                   aria-haspopup="menu"
                   aria-expanded={menu}
                   className="flex items-center gap-2 rounded-lg p-1 pr-2 hover:bg-surface-2"
@@ -286,6 +361,16 @@ function Shell({ children }: { children: React.ReactNode }) {
                     <Link href="/billing" role="menuitem" className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-surface-2">
                       <Icon name="creditCard" /> Billing
                     </Link>
+                    <button
+                      onClick={() => {
+                        setMenu(false);
+                        openTour();
+                      }}
+                      role="menuitem"
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-surface-2"
+                    >
+                      <Icon name="sparkles" /> Product tour
+                    </button>
                     <Link href="/docs" target="_blank" rel="noopener" role="menuitem" className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-surface-2">
                       <Icon name="info" /> Help and docs
                     </Link>
@@ -298,11 +383,15 @@ function Shell({ children }: { children: React.ReactNode }) {
             </div>
           </header>
           <main className="mx-auto w-full max-w-6xl flex-1 p-4 md:p-8 print:p-0">
+            {user.isDemo && <DemoBanner />}
             {!user.emailVerified && <VerifyBanner email={user.email} onDone={refreshUser} />}
             {children}
           </main>
         </div>
       </div>
+      {tourOpen && (
+        <ProductTour steps={tourSteps({ name: user.name, isDemo: user.isDemo, compact: compactTour })} onClose={closeTour} />
+      )}
     </ShellContext.Provider>
   );
 }

@@ -18,7 +18,7 @@ async function loadByToken(token) {
     Client.findOne({ _id: invoice.clientId }),
     User.findById(invoice.userId).select("+logo"),
   ]);
-  if (!seller || seller.banned) return null;
+  if (!seller || seller.banned || seller.isDemo) return null; // demo workspaces never have public pages
   return { invoice, client, seller };
 }
 

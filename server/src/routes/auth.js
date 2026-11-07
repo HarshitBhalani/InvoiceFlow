@@ -4,7 +4,8 @@ const jwt = require("jsonwebtoken");
 const { z } = require("zod");
 const User = require("../models/User");
 const { CURRENCIES } = require("../models/User");
-const { requireAuth } = require("../middleware/auth");
+const { requireAuth, blockDemo } = require("../middleware/auth");
+const { createDemoWorkspace, deleteExpiredDemos, MAX_ACTIVE_DEMOS } = require("../lib/demoData");
 const { createToken, hash } = require("../lib/tokens");
 const { sendEmail, layout, esc, clientUrl } = require("../lib/email");
 
@@ -38,9 +39,9 @@ const cookieOptions = () => {
   };
 };
 
-const sendToken = (res, user) => {
-  const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: "7d", algorithm: "HS256" });
-  res.cookie("token", token, cookieOptions());
+const sendToken = (res, user, { expiresIn = "7d", maxAge } = {}) => {
+  const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn, algorithm: "HS256" });
+  res.cookie("token", token, { ...cookieOptions(), ...(maxAge ? { maxAge } : {}) });
 };
 
 const publicUser = (u) => ({
@@ -59,6 +60,8 @@ const publicUser = (u) => ({
   autoReminders: !!u.autoReminders,
   // Accounts created before verification existed have no value and count as verified
   emailVerified: u.emailVerified !== false,
+  isDemo: !!u.isDemo,
+  tourDone: !!u.tourDone,
 });
 
 // Used to keep login timing similar whether or not the email exists
@@ -92,6 +95,21 @@ router.post("/signup", async (req, res, next) => {
     sendToken(res, user);
     // Do not make signup wait on (or fail because of) the email provider
     sendVerificationEmail(user).catch((e) => console.error("Verification email failed:", e.message));
+    res.status(201).json({ user: publicUser(user) });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// "Try the demo account": a fresh private workspace with sample data, no sign-up needed. Deleted after 24 hours.
+router.post("/demo", async (req, res, next) => {
+  try {
+    deleteExpiredDemos().catch((e) => console.error("Demo cleanup failed:", e.message)); // tidy up in the background
+    if ((await User.countDocuments({ isDemo: true })) >= MAX_ACTIVE_DEMOS) {
+      return res.status(503).json({ error: "The demo is busy right now. Please try again in a few minutes, or create a free account." });
+    }
+    const user = await createDemoWorkspace();
+    sendToken(res, user, { expiresIn: "24h", maxAge: 24 * 60 * 60 * 1000 });
     res.status(201).json({ user: publicUser(user) });
   } catch (e) {
     next(e);
@@ -210,6 +228,9 @@ router.patch("/profile", requireAuth, async (req, res, next) => {
   try {
     const data = profileSchema.parse(req.body);
     // Automatic reminders are a Pro feature
+    if (data.autoReminders && req.user.isDemo) {
+      return res.status(403).json({ error: "Automatic reminders are not available in the demo.", code: "DEMO_MODE" });
+    }
     if (data.autoReminders && req.user.plan !== "pro") {
       return res.status(403).json({ error: "Automatic reminders are a Pro feature", code: "PLAN_LIMIT" });
     }
@@ -264,7 +285,7 @@ const passwordSchema = z.object({
   newPassword: newPassword.refine(() => true),
 });
 
-router.post("/change-password", requireAuth, async (req, res, next) => {
+router.post("/change-password", requireAuth, blockDemo("Changing the password"), async (req, res, next) => {
   try {
     const { currentPassword, newPassword: next_ } = passwordSchema.parse(req.body);
     const user = await User.findById(req.user._id).select("+passwordHash");
@@ -278,6 +299,16 @@ router.post("/change-password", requireAuth, async (req, res, next) => {
     user.passwordChangedAt = new Date(); // other devices are signed out, this one gets a fresh token below
     await user.save();
     sendToken(res, user);
+    res.json({ ok: true });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// The product tour was finished or skipped: do not open it by itself again
+router.post("/tour-done", requireAuth, async (req, res, next) => {
+  try {
+    await User.updateOne({ _id: req.user._id }, { tourDone: true });
     res.json({ ok: true });
   } catch (e) {
     next(e);
