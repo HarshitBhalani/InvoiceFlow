@@ -25,6 +25,7 @@ type PublicInvoice = {
   client: { name: string; company?: string; email: string } | null;
   seller: { name: string; contactName: string; email: string; address: string; logo: string; accentColor: string; template: string };
   canPay: boolean;
+  stripeMode?: "test" | "live" | null;
 };
 
 function PublicInvoice() {
@@ -213,6 +214,11 @@ function PublicInvoice() {
               <Icon name="creditCard" /> Pay {money(inv.total, cur)} now
             </Button>
             <p className="mt-2 text-xs text-muted">Secure card payment by Stripe.</p>
+            {data.stripeMode === "test" && (
+              <p className="mx-auto mt-2 max-w-sm rounded-md bg-warning-soft px-3 py-2 text-xs text-warning">
+                Test mode: no real money is charged. Pay with card 4242 4242 4242 4242, any future date and any CVC.
+              </p>
+            )}
           </div>
         )}
         {!paid && !data.canPay && (

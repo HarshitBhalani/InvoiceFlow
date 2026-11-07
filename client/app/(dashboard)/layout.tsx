@@ -24,6 +24,7 @@ export type User = {
   emailVerified: boolean;
 };
 export type Billing = {
+  stripeMode?: "test" | "live" | null; // which Stripe world the server talks to
   plan: "free" | "pro";
   usage: { invoices: number; limit: number | null };
   subscription: { status: string; currentPeriodEnd?: string; cancelAtPeriodEnd: boolean } | null;

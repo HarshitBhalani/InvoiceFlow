@@ -3,6 +3,7 @@
 const User = require("../models/User");
 const Subscription = require("../models/Subscription");
 const Invoice = require("../models/Invoice");
+const { stripeMode } = require("../config/stripeMode");
 
 const ACTIVE = ["active", "trialing"];
 
@@ -46,6 +47,10 @@ async function syncSubscription(sub) {
 // A client paid an invoice through its public link. Only marks it paid if Stripe says paid AND the amount matches.
 async function markInvoicePaid(session) {
   if (session.payment_status !== "paid") return false; // e.g. delayed payment methods: wait for the paid event
+  if (typeof session.livemode === "boolean" && session.livemode !== (stripeMode() === "live")) {
+    console.warn("Stripe sync: ignored a payment session from the other Stripe mode");
+    return false;
+  }
   const invoice = await Invoice.findById(session.metadata?.invoiceId);
   if (!invoice) {
     console.warn("Stripe sync: invoice not found", session.metadata?.invoiceId);

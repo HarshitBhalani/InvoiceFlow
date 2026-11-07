@@ -6,11 +6,24 @@ const { requireAuth } = require("../middleware/auth");
 const { FREE_LIMIT } = require("../middleware/planLimit");
 const { syncSubscription } = require("../lib/stripeSync");
 const User = require("../models/User");
+const { stripeMode } = require("../config/stripeMode");
 
 router.use(requireAuth);
 
+const missing = (e) => e?.code === "resource_missing";
+
 async function ensureCustomer(user) {
-  if (user.stripeCustomerId) return user.stripeCustomerId;
+  if (user.stripeCustomerId) {
+    try {
+      const existing = await getStripe().customers.retrieve(user.stripeCustomerId);
+      if (!existing.deleted) return user.stripeCustomerId;
+    } catch (e) {
+      if (!missing(e)) throw e;
+    }
+    // The saved customer does not exist in the Stripe account / mode we are connected to now
+    // (for example after switching between sandbox and live keys), so start with a fresh one.
+    user.stripeCustomerId = undefined;
+  }
   const customer = await getStripe().customers.create({
     email: user.email,
     name: user.name,
@@ -28,6 +41,7 @@ router.get("/status", async (req, res, next) => {
       Subscription.findOne({ userId: req.user._id }),
     ]);
     res.json({
+      stripeMode: stripeMode(), // "test" | "live" | null, so the UI only shows test hints in test mode
       plan: req.user.plan,
       usage: { invoices: used, limit: req.user.plan === "pro" ? null : FREE_LIMIT() },
       subscription: sub && {
@@ -48,9 +62,13 @@ router.get("/status", async (req, res, next) => {
 router.post("/sync", async (req, res, next) => {
   try {
     if (req.user.stripeCustomerId) {
-      const subs = await getStripe().subscriptions.list({ customer: req.user.stripeCustomerId, status: "all", limit: 10 });
-      const best = subs.data.find((s) => ["active", "trialing"].includes(s.status)) || subs.data[0];
-      if (best) await syncSubscription(best);
+      try {
+        const subs = await getStripe().subscriptions.list({ customer: req.user.stripeCustomerId, status: "all", limit: 10 });
+        const best = subs.data.find((s) => ["active", "trialing"].includes(s.status)) || subs.data[0];
+        if (best) await syncSubscription(best);
+      } catch (e) {
+        if (!missing(e)) throw e; // a customer from another Stripe account or mode simply has no subscription here
+      }
     }
     const fresh = await User.findById(req.user._id).select("plan");
     res.json({ plan: fresh.plan });
@@ -90,6 +108,7 @@ router.post("/portal", async (req, res, next) => {
     });
     res.json({ url: session.url });
   } catch (e) {
+    if (missing(e)) return res.status(400).json({ error: "No billing account found for this Stripe mode yet." });
     next(e);
   }
 });

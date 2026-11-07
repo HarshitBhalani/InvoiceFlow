@@ -107,7 +107,11 @@ function BillingContent() {
 
   return (
     <div>
-      <PageHeader title="Billing" description="Your plan and subscription." />
+      <PageHeader
+        title="Billing"
+        description="Your plan and subscription."
+        actions={status.stripeMode === "test" ? <Badge tone="warning">Stripe test mode</Badge> : undefined}
+      />
 
       {justPaid && !pro && activation === "checking" && <Alert tone="info">Payment received. Confirming your upgrade with Stripe...</Alert>}
       {justPaid && !pro && activation === "failed" && (
@@ -171,7 +175,12 @@ function BillingContent() {
               </Button>
             )}
           </div>
-          {!pro && <p className="mt-3 text-center text-xs text-muted">Secure payment by Stripe. Test mode: card 4242 4242 4242 4242.</p>}
+          {!pro && (
+            <p className="mt-3 text-center text-xs text-muted">
+              Secure payment by Stripe.
+              {status.stripeMode === "test" && " Test mode: no real money is charged. Use card 4242 4242 4242 4242."}
+            </p>
+          )}
           {!pro && (
             <button type="button" onClick={checkAgain} disabled={syncing} className="mt-2 block w-full text-center text-xs font-medium text-primary hover:underline disabled:opacity-50">
               Already paid? Refresh plan status

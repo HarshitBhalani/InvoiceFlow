@@ -1,5 +1,6 @@
 const getStripe = require("../config/stripe");
 const { syncSubscription, markInvoicePaid } = require("../lib/stripeSync");
+const { stripeMode } = require("../config/stripeMode");
 
 async function stripeWebhook(req, res) {
   let event;
@@ -13,6 +14,13 @@ async function stripeWebhook(req, res) {
   } catch (err) {
     console.error("Webhook signature failed:", err.message);
     return res.status(400).send("Webhook Error: invalid signature");
+  }
+
+  // A test server must never act on live events, and a live server never on test events.
+  // Answer 200 so Stripe does not keep retrying something we will never handle.
+  if (event.livemode !== (stripeMode() === "live")) {
+    console.warn(`Stripe webhook: ignored a ${event.livemode ? "live" : "test"} event on a ${stripeMode()} server (${event.type})`);
+    return res.json({ received: true, ignored: true });
   }
 
   try {

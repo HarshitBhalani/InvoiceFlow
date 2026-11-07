@@ -1,4 +1,4 @@
-const API = process.env.NEXT_PUBLIC_API_URL;
+const API = process.env.NEXT_PUBLIC_API_URL || "/api"; // "/api" = the same-origin proxy used in production
 
 export class ApiError extends Error {
   status: number;

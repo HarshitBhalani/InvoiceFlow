@@ -9,6 +9,7 @@ const { ZodError } = require("zod");
 const connectDB = require("./config/db");
 const { startInternalScheduler } = require("./lib/jobs");
 const { ipKey } = require("./lib/clientIp");
+const { assertStripeModeAllowed } = require("./config/stripeMode");
 
 for (const key of ["MONGO_URI", "JWT_SECRET", "CLIENT_URL"]) {
   if (!process.env[key]) {
@@ -20,6 +21,18 @@ if (process.env.JWT_SECRET.length < 32) {
   console.error("JWT_SECRET is too short. Use at least 32 random characters.");
   process.exit(1);
 }
+// Stripe test vs live: a live key is refused unless this is production AND STRIPE_ALLOW_LIVE=true
+let stripeMode = null;
+try {
+  stripeMode = assertStripeModeAllowed();
+} catch (e) {
+  console.error(e.message);
+  process.exit(1);
+}
+if (stripeMode === "test") console.log("Stripe: TEST mode (sandbox). No real money moves.");
+if (stripeMode === "live") console.warn("Stripe: LIVE mode. Real cards will be charged.");
+if (!stripeMode) console.log("Stripe: not configured (payments are disabled).");
+
 if (process.env.STRIPE_SECRET_KEY && !process.env.STRIPE_WEBHOOK_SECRET) {
   console.warn("WARNING: STRIPE_SECRET_KEY is set but STRIPE_WEBHOOK_SECRET is empty. Stripe webhooks will be rejected.");
   console.warn("         Payments still activate through the confirm-after-redirect fallback, but set the secret before deploying.");
@@ -175,6 +188,18 @@ connectDB()
     server.listen(port, () => {
       console.log(`Server on :${port}`);
       startInternalScheduler();
+      // Ask Stripe itself which world the key belongs to. This catches a key that does not match what its prefix claims.
+      if (stripeMode) {
+        require("./config/stripe")()
+          .balance.retrieve()
+          .then((b) => {
+            if (b.livemode !== (stripeMode === "live")) {
+              console.error(`Stripe key mismatch: the key looks like ${stripeMode} but Stripe says livemode=${b.livemode}. Shutting down.`);
+              process.exit(1);
+            }
+          })
+          .catch((e) => console.warn("Could not verify the Stripe account right now:", e.message));
+      }
     });
   })
   .catch((e) => {

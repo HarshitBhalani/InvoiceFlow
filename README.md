@@ -117,86 +117,18 @@ Browser ──> Next.js (Vercel) ──/api/* proxy──> Express API (Render) 
 
 ---
 
-## Quick start (run it on your computer)
+## Stripe test mode vs live mode (safety)
+Locally and in development the app only ever talks to Stripe's **test (sandbox)** world, where no real money moves.
 
-### 1. What you need
-- **Node.js 20 or newer** (`node -v` to check). Download from [nodejs.org](https://nodejs.org)
-- **Git**
-- A free **MongoDB Atlas** cluster ([mongodb.com/atlas](https://www.mongodb.com/atlas)). Create a database user, and under **Network Access** allow your IP (or `0.0.0.0/0` for testing). Copy the connection string.
-- _Optional:_ a free [Stripe](https://stripe.com) account (test mode) and a free [Resend](https://resend.com) account
+| Key you put in `STRIPE_SECRET_KEY` | What happens |
+|---|---|
+| `sk_test_...` | Works anywhere (local, development, a production demo) |
+| `sk_live_...` outside production | **The server refuses to start**, with a clear message |
+| `sk_live_...` in production | Refused too, unless you also set `STRIPE_ALLOW_LIVE=true` |
 
-### 2. Get the code
-```bash
-git clone https://github.com/HarshitBhalani/InvoiceFlow.git
-cd InvoiceFlow
-```
+Extra protections: the server asks Stripe which mode the key belongs to and shuts down on a mismatch, ignores webhook events from the other mode, and only shows "test mode" hints in the UI when the key really is a test key. The Stripe CLI (`stripe listen`) forwards test events by default. Never use its `--live` flag locally.
 
-### 3. Start the backend (terminal 1)
-```bash
-cd server
-npm install
-```
-Create `server/.env` from the example (Mac / Linux: `cp .env.example .env`, Windows PowerShell: `copy .env.example .env`) and fill in at least these two:
-
-```env
-MONGO_URI=mongodb+srv://<user>:<password>@<cluster>.mongodb.net/invoiceflow
-JWT_SECRET=<a long random string>
-```
-Generate a secret with: `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`
-
-Then:
-```bash
-npm run seed      # optional: demo account, sample data, admin account
-npm run dev       # API on http://localhost:5000
-```
-You should see `MongoDB connected` and `Server on :5000`.
-
-### 4. Start the frontend (terminal 2)
-```bash
-cd client
-npm install
-```
-Create `client/.env.local` (copy `.env.example`):
-```env
-NEXT_PUBLIC_API_URL=http://localhost:5000/api
-```
-```bash
-npm run dev       # app on http://localhost:3000
-```
-
-### 5. Open it
-Go to **http://localhost:3000**.
-- Click **Try the demo account** on the login page (needs `npm run seed`), or **Create an account**.
-- The seed prints the admin password **once**. Set your own with `SEED_ADMIN_PASSWORD` in `server/.env` before running the seed.
-
-**Emails without Resend:** leave `RESEND_API_KEY` empty. In development every email (verification link, reset link, invoice) is printed in the **server terminal**. Copy the link from there.
-
-### 6. Turn on payments (optional)
-1. In the Stripe dashboard (**Test mode**), create a product with a **recurring monthly price** and copy its Price ID (`price_...`). Copy your **Secret key** (`sk_test_...`).
-2. Activate the **Customer Portal**: Settings, Billing, Customer portal.
-3. Put these in `server/.env`:
-   ```env
-   STRIPE_SECRET_KEY=sk_test_...
-   STRIPE_PRO_PRICE_ID=price_...
-   ```
-4. Install the [Stripe CLI](https://stripe.com/docs/stripe-cli) (Windows: `winget install Stripe.StripeCli`), run `stripe login`, then forward webhooks:
-   ```bash
-   stripe listen --events checkout.session.completed,checkout.session.async_payment_succeeded,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted --forward-to localhost:5000/api/webhooks/stripe
-   ```
-5. Copy the `whsec_...` it prints into `server/.env` as `STRIPE_WEBHOOK_SECRET`, then **restart the server**.
-6. Test: **Billing, Upgrade to Pro**, card `4242 4242 4242 4242`. For a client payment: open an invoice, **Copy link**, open it in a private window and pay.
-
-Other test cards: `4000 0000 0000 0002` (declined), `4000 0025 0000 3155` (3D Secure).
-
-### Useful commands
-| Where | Command | What it does |
-|---|---|---|
-| `server` | `npm run dev` | API with auto-restart |
-| `server` | `npm start` | API (production) |
-| `server` | `npm run seed` | Demo and admin accounts with sample data |
-| `client` | `npm run dev` | Frontend dev server |
-| `client` | `npm run build` / `npm start` | Production build and server |
-| `client` | `npm run lint` | Lint |
+When you eventually go live: use a **separate MongoDB database**, create the product and price again in live mode (price IDs differ between test and live), create a new live webhook endpoint with its own secret, and then set `STRIPE_ALLOW_LIVE=true`. Saved test customer IDs are replaced automatically the next time a user starts a checkout.
 
 ---
 
@@ -214,6 +146,7 @@ Other test cards: `4000 0000 0000 0002` (declined), `4000 0025 0000 3155` (3D Se
 | `STRIPE_SECRET_KEY` | for payments | Stripe secret key |
 | `STRIPE_PRO_PRICE_ID` | for payments | Price ID of the Pro plan |
 | `STRIPE_WEBHOOK_SECRET` | for payments | Webhook signing secret (`whsec_...`) |
+| `STRIPE_ALLOW_LIVE` | no | Set to `true` **only in production** to allow a live Stripe key (`sk_live_...`). Without it a live key is refused |
 | `FREE_INVOICE_LIMIT` | no | Invoices allowed on Free (default 5) |
 | `PRO_PRICE_USD` | no | Pro price, only used to calculate MRR in the admin panel (default 19) |
 | `RESEND_API_KEY` | for email | Resend API key. Empty in dev = emails print to the console |
@@ -301,7 +234,7 @@ Render's free tier sleeps after inactivity, so the first request can take around
 - **Passwords:** bcrypt (cost 12), 8 to 72 characters. Login and reset do not reveal whether an account exists.
 - **Tokens:** reset and verification tokens are random, single-use, expire, and only their SHA-256 hash is stored.
 - **Data isolation:** every query is scoped to the logged-in user. Invoice pay links use 144-bit random tokens.
-- **Payments:** Stripe webhook signature is verified; an invoice is only marked paid if the amount and currency match.
+- **Payments:** Stripe webhook signature is verified; an invoice is only marked paid if the amount and currency match. Live Stripe keys are refused outside production, and events from the other Stripe mode are ignored.
 - **Input:** Zod validation on every endpoint, escaped regex search, size-limited request bodies, escaped HTML in emails.
 - **Headers:** Helmet on the API. The web app sends `X-Frame-Options`, `nosniff`, `Referrer-Policy` and `Permissions-Policy`. Pay links are `noindex` and send no referrer.
 - **Real visitor IP:** rate limits use the IP passed by the Vercel proxy only when it carries `PROXY_SECRET`; otherwise the address the Render load balancer saw. Faking `X-Forwarded-For` or `x-client-ip` does not help.
@@ -320,7 +253,8 @@ Known trade-offs: signup reveals whether an email is already registered, rate li
 |---|---|
 | `querySrv ECONNREFUSED` when the API starts | Your computer's DNS refuses SRV lookups. The API already uses public DNS in development. If it still fails, check your network or VPN |
 | `bad auth: Authentication failed` | Wrong username or password in `MONGO_URI`. Special characters in the password must be URL-encoded (`@` becomes `%40`) |
-| `stripe listen` says `must specify events to forward` | Use the full command with `--events` from step 6 above |
+| Server exits with `Refusing to start: STRIPE_SECRET_KEY is a LIVE key` | You pasted a live key. Use the `sk_test_...` key from the Stripe dashboard in Test mode / a sandbox. Live keys are only allowed in production with `STRIPE_ALLOW_LIVE=true` |
+| `stripe listen` says `must specify events to forward` | Add `--events checkout.session.completed,checkout.session.async_payment_succeeded,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted` to the command |
 | Paid, but the plan still shows Free | Click **Already paid? Refresh plan status** on the Billing page. Make sure `STRIPE_SECRET_KEY` belongs to the same Stripe account as your CLI login |
 | Webhook returns `400` | `STRIPE_WEBHOOK_SECRET` is empty or from a different `stripe listen` session. Copy it again and restart the server |
 | No emails arrive | Without `RESEND_API_KEY` emails only print in the server terminal. With the default sender, Resend only delivers to your own address |

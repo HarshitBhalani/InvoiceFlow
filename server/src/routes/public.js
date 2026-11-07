@@ -6,6 +6,7 @@ const Client = require("../models/Client");
 const getStripe = require("../config/stripe");
 const { clientUrl } = require("../lib/email");
 const { markInvoicePaid } = require("../lib/stripeSync");
+const { stripeMode } = require("../config/stripeMode");
 
 const TOKEN_RE = /^[A-Za-z0-9_-]{10,64}$/;
 
@@ -52,6 +53,7 @@ router.get("/invoices/:token", async (req, res, next) => {
         template: seller.template || "classic",
       },
       canPay: invoice.status !== "paid" && !!process.env.STRIPE_SECRET_KEY && invoice.total > 0,
+      stripeMode: stripeMode(),
     });
   } catch (e) {
     next(e);
