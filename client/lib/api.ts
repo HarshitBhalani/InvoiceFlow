@@ -1,6 +1,6 @@
 const API = process.env.NEXT_PUBLIC_API_URL;
 
-export async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+export async function api<T = unknown>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     ...options,
     credentials: "include", // send the httpOnly cookie
@@ -10,3 +10,5 @@ export async function api<T = any>(path: string, options: RequestInit = {}): Pro
   if (!res.ok) throw new Error(data.error || "Request failed");
   return data;
 }
+
+export const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong");

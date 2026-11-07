@@ -18,6 +18,8 @@ app.use("/api/auth", rateLimit({ windowMs: 15 * 60 * 1000, max: 100 }));
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 app.use("/api/auth", require("./routes/auth"));
+app.use("/api/clients", require("./routes/clients"));
+app.use("/api/invoices", require("./routes/invoices"));
 
 app.use((err, req, res, next) => {
   if (err instanceof ZodError) {

@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { api, errMsg } from "@/lib/api";
 
 export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const router = useRouter();
@@ -18,8 +18,8 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
     try {
       await api(`/auth/${mode}`, { method: "POST", body: JSON.stringify(form) });
       router.push("/dashboard");
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError(errMsg(err));
     } finally {
       setLoading(false);
     }
