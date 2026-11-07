@@ -1,84 +1,127 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, errMsg } from "@/lib/api";
-import { formatDate, useDebounce } from "@/lib/hooks";
-import { Pagination, inputCls } from "@/components/ui";
+import { useApi, useDebounce, usePageTitle } from "@/lib/hooks";
+import { formatDate } from "@/lib/format";
+import { useConfirm, useToast } from "@/components/providers";
+import { Avatar, Badge, Button, Card, EmptyState, ErrorState, Pagination, SearchInput, SegmentedControl, Skeleton } from "@/components/ui";
 
 type AdminUser = { _id: string; name: string; email: string; role: string; plan: string; banned: boolean; createdAt: string };
 type ListRes = { users: AdminUser[]; total: number; page: number; pages: number };
+type PlanFilter = "all" | "free" | "pro";
 
 export default function AdminUsersPage() {
-  const [data, setData] = useState<ListRes | null>(null);
+  usePageTitle("Admin: users");
+  const toast = useToast();
+  const confirm = useConfirm();
   const [search, setSearch] = useState("");
-  const [plan, setPlan] = useState("");
+  const [plan, setPlan] = useState<PlanFilter>("all");
   const [page, setPage] = useState(1);
-  const [error, setError] = useState("");
+  const [busyId, setBusyId] = useState<string | null>(null);
   const q = useDebounce(search);
 
-  const load = useCallback(async () => {
-    try {
-      setData(await api<ListRes>(`/admin/users?page=${page}&search=${encodeURIComponent(q)}&plan=${plan}`));
-    } catch (e) {
-      setError(errMsg(e));
-    }
-  }, [page, q, plan]);
-
-  useEffect(() => { load(); }, [load]);
   useEffect(() => { setPage(1); }, [q, plan]);
 
+  const { data, error, loading, reload } = useApi<ListRes>(
+    `/admin/users?page=${page}&limit=10&search=${encodeURIComponent(q)}&plan=${plan === "all" ? "" : plan}`
+  );
+
   async function toggleBan(u: AdminUser) {
-    if (!confirm(`${u.banned ? "Unban" : "Ban"} ${u.name}?`)) return;
+    const ok = await confirm({
+      title: `${u.banned ? "Unban" : "Ban"} ${u.name}?`,
+      message: u.banned ? "They will be able to log in again." : "They will be logged out and unable to log in.",
+      confirmText: u.banned ? "Unban user" : "Ban user",
+      danger: !u.banned,
+    });
+    if (!ok) return;
+    setBusyId(u._id);
     try {
       await api(`/admin/users/${u._id}/ban`, { method: "PATCH", body: JSON.stringify({ banned: !u.banned }) });
-      load();
+      toast.success(u.banned ? "User unbanned" : "User banned");
+      reload();
     } catch (e) {
-      alert(errMsg(e));
+      toast.error(errMsg(e));
+    } finally {
+      setBusyId(null);
     }
   }
 
+  const banButton = (u: AdminUser) =>
+    u.role !== "admin" && (
+      <Button variant={u.banned ? "secondary" : "ghost"} size="sm" disabled={busyId === u._id} onClick={() => toggleBan(u)} className={u.banned ? "" : "hover:!text-danger"}>
+        {u.banned ? "Unban" : "Ban"}
+      </Button>
+    );
+
   return (
     <div>
-      <div className="mb-4 flex flex-wrap gap-3">
-        <input className={`${inputCls} max-w-xs`} placeholder="Search name or email" value={search}
-          onChange={(e) => setSearch(e.target.value)} />
-        <select className={`${inputCls} max-w-[10rem]`} value={plan} onChange={(e) => setPlan(e.target.value)}>
-          <option value="">All plans</option>
-          <option value="free">Free</option>
-          <option value="pro">Pro</option>
-        </select>
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <SearchInput value={search} onChange={setSearch} placeholder="Search name or email" />
+        <SegmentedControl
+          value={plan}
+          onChange={setPlan}
+          options={[{ value: "all", label: "All" }, { value: "free", label: "Free" }, { value: "pro", label: "Pro" }]}
+        />
       </div>
-      {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
+      {error && <ErrorState message={error} onRetry={reload} />}
 
-      <div className="overflow-x-auto rounded-xl border bg-white">
-        <table className="w-full text-left text-sm">
-          <thead className="border-b bg-gray-50 text-gray-500">
-            <tr><th className="p-3">Name</th><th className="p-3">Email</th><th className="p-3">Plan</th><th className="p-3">Joined</th><th className="p-3">Status</th><th className="p-3" /></tr>
-          </thead>
-          <tbody>
-            {!data && <tr><td className="p-4 text-gray-500" colSpan={6}>Loading...</td></tr>}
-            {data?.users.length === 0 && <tr><td className="p-6 text-center text-gray-500" colSpan={6}>No users found.</td></tr>}
-            {data?.users.map((u) => (
-              <tr key={u._id} className="border-b last:border-0">
-                <td className="p-3 font-medium">{u.name}{u.role === "admin" && <span className="ml-2 rounded bg-purple-100 px-1.5 py-0.5 text-xs text-purple-700">admin</span>}</td>
-                <td className="p-3">{u.email}</td>
-                <td className="p-3">
-                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium uppercase ${u.plan === "pro" ? "bg-indigo-100 text-indigo-700" : "bg-gray-100 text-gray-700"}`}>{u.plan}</span>
-                </td>
-                <td className="p-3">{formatDate(u.createdAt)}</td>
-                <td className="p-3">{u.banned ? <span className="text-red-600">Banned</span> : <span className="text-green-600">Active</span>}</td>
-                <td className="p-3 text-right">
-                  {u.role !== "admin" && (
-                    <button className={u.banned ? "text-green-600 hover:underline" : "text-red-600 hover:underline"} onClick={() => toggleBan(u)}>
-                      {u.banned ? "Unban" : "Ban"}
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {data && <Pagination page={data.page} pages={data.pages} onChange={setPage} />}
+      <Card className="overflow-hidden">
+        {!data && !error && <div className="space-y-3 p-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-12" />)}</div>}
+        {data && data.users.length === 0 && <EmptyState icon="users" title="No users found" description="Try a different search or filter." />}
+
+        {data && data.users.length > 0 && (
+          <div className={loading ? "opacity-60 transition-opacity" : "transition-opacity"}>
+            <table className="hidden w-full text-left text-sm md:table">
+              <thead className="border-b border-line bg-surface-2 text-xs uppercase tracking-wide text-muted">
+                <tr>
+                  <th className="px-4 py-3 font-medium">User</th>
+                  <th className="px-4 py-3 font-medium">Plan</th>
+                  <th className="px-4 py-3 font-medium">Joined</th>
+                  <th className="px-4 py-3 font-medium">Status</th>
+                  <th className="px-4 py-3" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {data.users.map((u) => (
+                  <tr key={u._id} className="hover:bg-surface-2/60">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <Avatar name={u.name} />
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{u.name} {u.role === "admin" && <Badge tone="primary">admin</Badge>}</p>
+                          <p className="truncate text-xs text-muted">{u.email}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3"><Badge tone={u.plan === "pro" ? "primary" : "neutral"}>{u.plan.toUpperCase()}</Badge></td>
+                    <td className="px-4 py-3 text-muted">{formatDate(u.createdAt)}</td>
+                    <td className="px-4 py-3"><Badge tone={u.banned ? "danger" : "success"}>{u.banned ? "Banned" : "Active"}</Badge></td>
+                    <td className="px-4 py-3 text-right">{banButton(u)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <ul className="divide-y divide-line md:hidden">
+              {data.users.map((u) => (
+                <li key={u._id} className="flex items-center gap-3 p-4">
+                  <Avatar name={u.name} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium">{u.name}</p>
+                    <p className="truncate text-xs text-muted">{u.email}</p>
+                    <div className="mt-1 flex gap-1">
+                      <Badge tone={u.plan === "pro" ? "primary" : "neutral"}>{u.plan.toUpperCase()}</Badge>
+                      <Badge tone={u.banned ? "danger" : "success"}>{u.banned ? "Banned" : "Active"}</Badge>
+                    </div>
+                  </div>
+                  {banButton(u)}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {data && <Pagination page={data.page} pages={data.pages} total={data.total} onChange={setPage} />}
+      </Card>
     </div>
   );
 }

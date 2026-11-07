@@ -1,43 +1,7 @@
 const getStripe = require("../config/stripe");
-const User = require("../models/User");
-const Subscription = require("../models/Subscription");
+const { syncSubscription, markInvoicePaid } = require("../lib/stripeSync");
 
-const ACTIVE = ["active", "trialing"];
-
-// Newer Stripe API versions moved current_period_end onto the subscription item
-const periodEnd = (sub) => {
-  const ts = sub.items?.data?.[0]?.current_period_end ?? sub.current_period_end;
-  return ts ? new Date(ts * 1000) : undefined;
-};
-
-async function findUser(sub) {
-  if (sub.metadata?.userId) {
-    const u = await User.findById(sub.metadata.userId);
-    if (u) return u;
-  }
-  return User.findOne({ stripeCustomerId: sub.customer });
-}
-
-// Single source of truth: mirror Stripe subscription state into our DB + user.plan
-async function syncSubscription(sub) {
-  const user = await findUser(sub);
-  if (!user) return console.warn("Stripe webhook: no user for subscription", sub.id);
-
-  await Subscription.findOneAndUpdate(
-    { userId: user._id },
-    {
-      stripeSubId: sub.id,
-      status: sub.status,
-      currentPeriodEnd: periodEnd(sub),
-      cancelAtPeriodEnd: !!sub.cancel_at_period_end,
-    },
-    { upsert: true, new: true }
-  );
-  user.plan = ACTIVE.includes(sub.status) ? "pro" : "free";
-  await user.save();
-}
-
-module.exports = async function stripeWebhook(req, res) {
+async function stripeWebhook(req, res) {
   let event;
   try {
     // req.body is a raw Buffer here (express.raw), which signature verification requires
@@ -53,11 +17,14 @@ module.exports = async function stripeWebhook(req, res) {
 
   try {
     switch (event.type) {
+      case "checkout.session.async_payment_succeeded":
       case "checkout.session.completed": {
         const session = event.data.object;
         if (session.mode === "subscription" && session.subscription) {
           const sub = await getStripe().subscriptions.retrieve(session.subscription);
           await syncSubscription(sub);
+        } else if (session.mode === "payment" && session.metadata?.invoiceId) {
+          await markInvoicePaid(session);
         }
         break;
       }
@@ -74,4 +41,8 @@ module.exports = async function stripeWebhook(req, res) {
     console.error("Webhook handler failed:", err);
     res.status(500).send("Webhook handler error"); // Stripe will retry
   }
-};
+}
+
+module.exports = stripeWebhook;
+module.exports.markInvoicePaid = markInvoicePaid;
+module.exports.syncSubscription = syncSubscription;

@@ -1,136 +1,191 @@
 "use client";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { api, errMsg } from "@/lib/api";
-import { formatDate } from "@/lib/hooks";
-import { btnPrimary, btnGhost } from "@/components/ui";
+import { useApi, usePageTitle } from "@/lib/hooks";
+import { formatDate } from "@/lib/format";
+import { Icon } from "@/components/Icon";
+import { useToast } from "@/components/providers";
+import { Alert, Badge, Button, Card, ErrorState, PageHeader, Skeleton, cx } from "@/components/ui";
+import type { Billing } from "../layout";
 
-type Status = {
-  plan: "free" | "pro";
-  usage: { invoices: number; limit: number | null };
-  subscription: { status: string; currentPeriodEnd?: string; cancelAtPeriodEnd: boolean } | null;
-};
+const freeFeatures = ["Up to 5 invoices", "Unlimited clients", "Dashboard and charts", "Print and PDF"];
+const proFeatures = ["Unlimited invoices", "Everything in Free", "Manage billing any time", "Cancel whenever you like"];
+
+function Features({ items }: { items: string[] }) {
+  return (
+    <ul className="mt-4 space-y-2 text-sm">
+      {items.map((i) => (
+        <li key={i} className="flex items-center gap-2">
+          <Icon name="check" className="h-4 w-4 shrink-0 text-success" /> {i}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// Asks the server to check Stripe directly (it does not depend on the webhook). True once the plan is Pro.
+async function syncPlan(): Promise<boolean> {
+  try {
+    const { plan } = await api<{ plan: string }>("/billing/sync", { method: "POST" });
+    return plan === "pro";
+  } catch {
+    return false;
+  }
+}
 
 function BillingContent() {
+  usePageTitle("Billing");
   const params = useSearchParams();
   const justPaid = params.get("success") === "1";
   const canceled = params.get("canceled") === "1";
-  const [status, setStatus] = useState<Status | null>(null);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const { data: status, error, reload } = useApi<Billing>("/billing/status");
+  const [busy, setBusy] = useState<"checkout" | "portal" | null>(null);
+  const [actionError, setActionError] = useState("");
 
-  const load = useCallback(async () => {
-    try {
-      const s = await api<Status>("/billing/status");
-      setStatus(s);
-      return s;
-    } catch (e) {
-      setError(errMsg(e));
-    }
-  }, []);
+  const toast = useToast();
+  const [activation, setActivation] = useState<"checking" | "failed">("checking");
+  const [syncing, setSyncing] = useState(false);
 
-  useEffect(() => { load(); }, [load]);
-
-  // After Stripe redirects back, the webhook may take a moment: poll until the plan flips to pro
+  // Back from Stripe: confirm with Stripe right away and retry for a while, instead of waiting for the webhook
   useEffect(() => {
     if (!justPaid) return;
-    let tries = 0;
-    const t = setInterval(async () => {
-      const s = await load();
-      tries++;
-      if (s?.plan === "pro") {
-        clearInterval(t);
-        window.location.replace("/billing"); // reload so the sidebar shows the new plan
-      } else if (tries >= 10) clearInterval(t);
-    }, 2000);
-    return () => clearInterval(t);
-  }, [justPaid, load]);
+    let cancelled = false;
+    (async () => {
+      for (let i = 0; i < 8 && !cancelled; i++) {
+        if (await syncPlan()) {
+          window.location.replace("/billing"); // full reload so the whole app shows the new plan
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      if (!cancelled) setActivation("failed");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [justPaid]);
 
-  async function go(path: "/billing/checkout" | "/billing/portal") {
-    setBusy(true);
-    setError("");
+  async function checkAgain() {
+    setSyncing(true);
+    setActivation("checking");
+    if (await syncPlan()) {
+      window.location.replace("/billing");
+      return;
+    }
+    setActivation("failed");
+    setSyncing(false);
+    if (!justPaid) toast.info("No active subscription found for your account yet.");
+  }
+
+  async function go(kind: "checkout" | "portal") {
+    setBusy(kind);
+    setActionError("");
     try {
-      const { url } = await api<{ url: string }>(path, { method: "POST" });
+      const { url } = await api<{ url: string }>(`/billing/${kind}`, { method: "POST" });
       window.location.href = url;
     } catch (e) {
-      setError(errMsg(e));
-      setBusy(false);
+      setActionError(errMsg(e));
+      setBusy(null);
     }
   }
 
-  if (!status) return <p className="text-gray-500">{error || "Loading..."}</p>;
+  if (error) return <ErrorState message={error} onRetry={reload} />;
+  if (!status) {
+    return (
+      <div className="grid gap-4 md:grid-cols-2">
+        <Skeleton className="h-72" />
+        <Skeleton className="h-72" />
+      </div>
+    );
+  }
 
   const pro = status.plan === "pro";
   const { invoices, limit } = status.usage;
+  const pct = limit ? Math.min((invoices / limit) * 100, 100) : 0;
+  const sub = status.subscription;
 
   return (
-    <div className="max-w-2xl">
-      <h1 className="mb-4 text-2xl font-bold">Billing</h1>
+    <div>
+      <PageHeader title="Billing" description="Your plan and subscription." />
 
-      {justPaid && !pro && (
-        <p className="mb-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">Payment received. Activating your Pro plan...</p>
+      {justPaid && !pro && activation === "checking" && <Alert tone="info">Payment received. Confirming your upgrade with Stripe...</Alert>}
+      {justPaid && !pro && activation === "failed" && (
+        <Alert
+          tone="warning"
+          action={<Button size="sm" variant="secondary" loading={syncing} onClick={checkAgain}>Check again</Button>}
+        >
+          We could not confirm your upgrade yet. If you were charged, click Check again. It can take a minute.
+        </Alert>
       )}
-      {canceled && <p className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Checkout canceled. No charge was made.</p>}
-      {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
+      {justPaid && pro && <Alert tone="success">You are now on Pro. Thank you!</Alert>}
+      {canceled && <Alert tone="warning">Checkout canceled. You were not charged.</Alert>}
+      {sub?.status === "past_due" && <Alert tone="danger">Your last payment failed. Update your payment method to keep Pro.</Alert>}
+      {actionError && <Alert tone="danger">{actionError}</Alert>}
 
-      <div className="rounded-xl border bg-white p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm text-gray-500">Current plan</p>
-            <p className="text-2xl font-bold capitalize">{status.plan}</p>
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card className={cx("p-6", !pro && "ring-2 ring-primary")}>
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold">Free</h2>
+            {!pro && <Badge tone="primary">Current plan</Badge>}
           </div>
-          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${pro ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-700"}`}>
-            {pro ? "Active" : "Free"}
-          </span>
-        </div>
+          <p className="mt-2 text-4xl font-bold">$0</p>
+          <Features items={freeFeatures} />
+          {!pro && limit !== null && (
+            <div className="mt-5">
+              <div className="mb-1 flex justify-between text-sm">
+                <span className="text-muted">Invoices used</span>
+                <span className="font-medium">{invoices} / {limit}</span>
+              </div>
+              <div className="h-2 rounded-full bg-surface-2" role="progressbar" aria-valuenow={invoices} aria-valuemax={limit} aria-label="Invoices used">
+                <div className={cx("h-2 rounded-full", pct >= 100 ? "bg-danger" : "bg-primary")} style={{ width: `${pct}%` }} />
+              </div>
+              {pct >= 100 && <p className="mt-2 text-xs text-danger">You reached the free limit. Upgrade to add more invoices.</p>}
+            </div>
+          )}
+        </Card>
 
-        {!pro && limit !== null && (
-          <div className="mt-4">
-            <div className="mb-1 flex justify-between text-sm">
-              <span>Invoices used</span>
-              <span>{invoices} / {limit}</span>
-            </div>
-            <div className="h-2 rounded-full bg-gray-200">
-              <div className="h-2 rounded-full bg-indigo-600" style={{ width: `${Math.min((invoices / limit) * 100, 100)}%` }} />
-            </div>
+        <Card className={cx("p-6", pro && "ring-2 ring-primary")}>
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold">Pro</h2>
+            {pro ? <Badge tone="success">Active</Badge> : <Badge tone="primary">Recommended</Badge>}
           </div>
-        )}
+          <p className="mt-2 text-4xl font-bold">$19<span className="text-base font-normal text-muted">/month</span></p>
+          <Features items={proFeatures} />
 
-        {pro && status.subscription?.currentPeriodEnd && (
-          <p className="mt-4 text-sm text-gray-600">
-            {status.subscription.cancelAtPeriodEnd ? "Ends on " : "Renews on "}
-            {formatDate(status.subscription.currentPeriodEnd)}
-          </p>
-        )}
+          {pro && sub?.currentPeriodEnd && (
+            <p className="mt-5 text-sm text-muted">
+              {sub.cancelAtPeriodEnd ? "Your plan ends on " : "Renews on "}
+              <span className="font-medium text-fg">{formatDate(sub.currentPeriodEnd)}</span>
+            </p>
+          )}
 
-        <div className="mt-6">
-          {pro ? (
-            <button className={btnGhost} onClick={() => go("/billing/portal")} disabled={busy}>Manage subscription</button>
-          ) : (
-            <button className={btnPrimary} onClick={() => go("/billing/checkout")} disabled={busy}>
-              {busy ? "Redirecting..." : "Upgrade to Pro"}
+          <div className="mt-6">
+            {pro ? (
+              <Button variant="secondary" className="w-full" onClick={() => go("portal")} loading={busy === "portal"}>
+                Manage subscription
+              </Button>
+            ) : (
+              <Button className="w-full" onClick={() => go("checkout")} loading={busy === "checkout"}>
+                <Icon name="zap" /> Upgrade to Pro
+              </Button>
+            )}
+          </div>
+          {!pro && <p className="mt-3 text-center text-xs text-muted">Secure payment by Stripe. Test mode: card 4242 4242 4242 4242.</p>}
+          {!pro && (
+            <button type="button" onClick={checkAgain} disabled={syncing} className="mt-2 block w-full text-center text-xs font-medium text-primary hover:underline disabled:opacity-50">
+              Already paid? Refresh plan status
             </button>
           )}
-        </div>
+        </Card>
       </div>
-
-      {!pro && (
-        <div className="mt-4 rounded-xl border bg-white p-6 text-sm">
-          <p className="mb-2 font-semibold">Pro includes</p>
-          <ul className="list-inside list-disc space-y-1 text-gray-600">
-            <li>Unlimited invoices</li>
-            <li>Priority support</li>
-          </ul>
-          <p className="mt-3 text-xs text-gray-400">Test mode: use card 4242 4242 4242 4242, any future date, any CVC.</p>
-        </div>
-      )}
     </div>
   );
 }
 
 export default function BillingPage() {
   return (
-    <Suspense fallback={<p className="text-gray-500">Loading...</p>}>
+    <Suspense fallback={<Skeleton className="h-72" />}>
       <BillingContent />
     </Suspense>
   );

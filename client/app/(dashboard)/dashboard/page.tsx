@@ -1,10 +1,14 @@
 "use client";
-import { useEffect, useState } from "react";
 import Link from "next/link";
-import { CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from "recharts";
-import { api, errMsg } from "@/lib/api";
-import { money } from "@/lib/hooks";
-import { useUser } from "../layout";
+import {
+  CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from "recharts";
+import { useApi, usePageTitle } from "@/lib/hooks";
+import { formatDate, greeting, money } from "@/lib/format";
+import { Icon, type IconName } from "@/components/Icon";
+import { Alert, Card, EmptyState, ErrorState, PageHeader, Skeleton, StatusBadge, cx } from "@/components/ui";
+import { useShell } from "../layout";
+import type { InvoiceData } from "@/components/InvoiceForm";
 
 type Stats = {
   totals: { revenue: number; pending: number; overdue: number; paidCount: number; invoiceCount: number };
@@ -13,104 +17,163 @@ type Stats = {
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  draft: "#9ca3af",
+  draft: "#94a3b8",
   sent: "#3b82f6",
   paid: "#22c55e",
   overdue: "#ef4444",
 };
 
-function StatCard({ label, value, tone }: { label: string; value: string; tone?: string }) {
+const tooltipStyle = {
+  contentStyle: { background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 8, color: "var(--fg)", fontSize: 12 },
+  labelStyle: { color: "var(--muted)" },
+  itemStyle: { color: "var(--fg)" },
+};
+const tick = { fontSize: 12, fill: "var(--muted)" };
+
+function StatCard({ label, value, icon, tone }: { label: string; value: string; icon: IconName; tone: string }) {
   return (
-    <div className="rounded-xl border bg-white p-4">
-      <p className="text-sm text-gray-500">{label}</p>
-      <p className={`mt-1 text-2xl font-bold ${tone || "text-gray-900"}`}>{value}</p>
-    </div>
+    <Card className="p-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted">{label}</p>
+        <span className={cx("flex h-8 w-8 items-center justify-center rounded-lg", tone)}>
+          <Icon name={icon} />
+        </span>
+      </div>
+      <p className="mt-2 text-2xl font-bold tabular-nums">{value}</p>
+    </Card>
   );
 }
 
-const Skeleton = ({ className }: { className: string }) => (
-  <div className={`animate-pulse rounded-xl bg-gray-200 ${className}`} />
-);
-
 export default function DashboardPage() {
-  const user = useUser();
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [error, setError] = useState("");
+  usePageTitle("Dashboard");
+  const { user } = useShell();
+  const stats = useApi<Stats>("/dashboard/stats");
+  const recent = useApi<{ invoices: InvoiceData[] }>("/invoices?limit=5");
 
-  useEffect(() => {
-    api<Stats>("/dashboard/stats").then(setStats).catch((e) => setError(errMsg(e)));
-  }, []);
-
-  const pieData = stats?.statusSplit.filter((s) => s.count > 0) ?? [];
+  const fmt = (n: number) => money(n, user.currency);
+  const s = stats.data;
+  const pie = s?.statusSplit.filter((x) => x.count > 0) ?? [];
+  const hasRevenue = s?.revenueByMonth.some((m) => m.revenue > 0);
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900">Hi, {user?.name} 👋</h1>
-      <p className="mb-6 mt-1 text-gray-600">Here is how your invoices are doing.</p>
-      {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
+      <PageHeader
+        title={`${greeting()}, ${user.name.split(" ")[0]}`}
+        description="Here is how your invoices are doing."
+        actions={
+          <Link href="/invoices?new=1" className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-fg hover:bg-primary-hover">
+            <Icon name="plus" /> New invoice
+          </Link>
+        }
+      />
 
-      {!stats && !error && (
-        <>
+      {stats.error && <ErrorState message={stats.error} onRetry={stats.reload} />}
+
+      {!s && !stats.error && (
+        <div className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-24" />)}
+            {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-28" />)}
           </div>
-          <div className="mt-6 grid gap-4 lg:grid-cols-3">
+          <div className="grid gap-4 lg:grid-cols-3">
             <Skeleton className="h-80 lg:col-span-2" />
             <Skeleton className="h-80" />
           </div>
-        </>
-      )}
-
-      {stats && stats.totals.invoiceCount === 0 && (
-        <div className="rounded-xl border border-dashed bg-white p-10 text-center">
-          <p className="font-medium text-gray-800">No invoices yet</p>
-          <p className="mb-4 text-sm text-gray-500">Create your first invoice to see revenue and charts here.</p>
-          <Link href="/invoices" className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">
-            Go to invoices
-          </Link>
         </div>
       )}
 
-      {stats && stats.totals.invoiceCount > 0 && (
+      {s && s.totals.invoiceCount === 0 && (
+        <Card>
+          <EmptyState
+            icon="fileText"
+            title="Create your first invoice"
+            description="Add a client, then create an invoice. Your revenue and charts will show up here."
+            action={
+              <Link href="/clients" className="inline-flex rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-fg hover:bg-primary-hover">
+                Add a client
+              </Link>
+            }
+          />
+        </Card>
+      )}
+
+      {s && s.totals.invoiceCount > 0 && (
         <>
+          {s.totals.overdue > 0 && (
+            <Alert
+              tone="danger"
+              action={<Link href="/invoices?status=overdue" className="font-semibold underline">View</Link>}
+            >
+              You have {fmt(s.totals.overdue)} in overdue invoices.
+            </Alert>
+          )}
+
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard label="Total revenue (paid)" value={money(stats.totals.revenue)} tone="text-green-600" />
-            <StatCard label="Pending (sent)" value={money(stats.totals.pending)} tone="text-blue-600" />
-            <StatCard label="Overdue" value={money(stats.totals.overdue)} tone="text-red-600" />
-            <StatCard label="Paid invoices" value={`${stats.totals.paidCount} / ${stats.totals.invoiceCount}`} />
+            <StatCard label="Revenue (paid)" value={fmt(s.totals.revenue)} icon="trendingUp" tone="bg-success-soft text-success" />
+            <StatCard label="Pending" value={fmt(s.totals.pending)} icon="clock" tone="bg-info-soft text-info" />
+            <StatCard label="Overdue" value={fmt(s.totals.overdue)} icon="alertCircle" tone="bg-danger-soft text-danger" />
+            <StatCard label="Paid invoices" value={`${s.totals.paidCount} of ${s.totals.invoiceCount}`} icon="checkCircle" tone="bg-primary-soft text-primary" />
           </div>
 
           <div className="mt-6 grid gap-4 lg:grid-cols-3">
-            <div className="rounded-xl border bg-white p-4 lg:col-span-2">
+            <Card className="p-4 lg:col-span-2">
               <h2 className="mb-3 font-semibold">Monthly revenue</h2>
-              <div className="h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={stats.revenueByMonth}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                    <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-                    <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `$${v}`} />
-                    <Tooltip formatter={(v) => money(Number(v))} />
-                    <Line type="monotone" dataKey="revenue" stroke="#4f46e5" strokeWidth={2} dot={{ r: 3 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
+              {hasRevenue ? (
+                <div className="h-72">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={s.revenueByMonth} margin={{ left: -8, right: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
+                      <XAxis dataKey="month" tick={tick} stroke="var(--line)" />
+                      <YAxis tick={tick} stroke="var(--line)" tickFormatter={(v) => `$${v}`} />
+                      <Tooltip {...tooltipStyle} formatter={(v) => fmt(Number(v))} />
+                      <Line type="monotone" dataKey="revenue" stroke="#6366f1" strokeWidth={2.5} dot={{ r: 3 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <EmptyState icon="trendingUp" title="No paid invoices yet" description="Mark an invoice as paid and your revenue chart will appear." />
+              )}
+            </Card>
 
-            <div className="rounded-xl border bg-white p-4">
+            <Card className="p-4">
               <h2 className="mb-3 font-semibold">Invoice status</h2>
               <div className="h-72">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie data={pieData} dataKey="count" nameKey="status" innerRadius={50} outerRadius={85} paddingAngle={2}>
-                      {pieData.map((s) => <Cell key={s.status} fill={STATUS_COLORS[s.status]} />)}
+                    <Pie data={pie} dataKey="count" nameKey="status" innerRadius={55} outerRadius={90} paddingAngle={2} stroke="none">
+                      {pie.map((x) => <Cell key={x.status} fill={STATUS_COLORS[x.status]} />)}
                     </Pie>
-                    <Tooltip />
+                    <Tooltip {...tooltipStyle} />
                     <Legend />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
-            </div>
+            </Card>
           </div>
+
+          <Card className="mt-6">
+            <div className="flex items-center justify-between p-4">
+              <h2 className="font-semibold">Recent invoices</h2>
+              <Link href="/invoices" className="text-sm font-medium text-primary hover:underline">View all</Link>
+            </div>
+            {recent.error && <div className="px-4 pb-4"><ErrorState message={recent.error} onRetry={recent.reload} /></div>}
+            {!recent.data && !recent.error && <div className="space-y-2 px-4 pb-4">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-10" />)}</div>}
+            <ul className="divide-y divide-line border-t border-line">
+              {recent.data?.invoices.map((inv) => (
+                <li key={inv._id}>
+                  <Link href={`/invoices/${inv._id}`} className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-surface-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">#{inv.number} · {inv.clientId?.name || "Deleted client"}</p>
+                      <p className="text-xs text-muted">Due {formatDate(inv.dueDate)}</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <StatusBadge status={inv.isOverdue ? "overdue" : inv.status} />
+                      <span className="w-24 text-right text-sm font-medium tabular-nums">{money(inv.total, inv.currency || user.currency)}</span>
+                    </div>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </Card>
         </>
       )}
     </div>

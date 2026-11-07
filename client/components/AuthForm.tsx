@@ -1,56 +1,145 @@
 "use client";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { api, errMsg } from "@/lib/api";
+import { usePageTitle } from "@/lib/hooks";
+import { Alert, Button, PasswordField, TextField, focusFirstInvalid } from "@/components/ui";
+
+type Fields = { name: string; email: string; password: string };
+type Errors = Partial<Record<keyof Fields, string>>;
+
+const DEMO = { email: "demo@invoiceflow.com", password: "demo1234" };
+
+function validate(mode: "login" | "signup", f: Fields): Errors {
+  const e: Errors = {};
+  if (mode === "signup" && f.name.trim().length < 2) e.name = "Enter your name (at least 2 characters)";
+  if (!/^\S+@\S+\.\S+$/.test(f.email.trim())) e.email = "Enter a valid email address";
+  if (mode === "signup") {
+    if (f.password.length < 8) e.password = "Use at least 8 characters";
+    else if (f.password.length > 72) e.password = "Use at most 72 characters";
+  } else if (!f.password) e.password = "Enter your password";
+  return e;
+}
 
 export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const router = useRouter();
-  const [form, setForm] = useState({ name: "", email: "", password: "" });
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const params = useSearchParams();
   const isSignup = mode === "signup";
+  usePageTitle(isSignup ? "Create account" : "Log in");
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    setLoading(true);
+  const [form, setForm] = useState<Fields>({ name: "", email: "", password: "" });
+  const [errors, setErrors] = useState<Errors>({});
+  const [formError, setFormError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [demoLoading, setDemoLoading] = useState(false);
+
+  // Already logged in? Skip the form.
+  useEffect(() => {
+    api("/auth/me")
+      .then(() => router.replace("/dashboard"))
+      .catch(() => {});
+  }, [router]);
+
+  const set = (k: keyof Fields) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    setForm({ ...form, [k]: e.target.value });
+    if (errors[k]) setErrors({ ...errors, [k]: undefined });
+  };
+
+  async function submit(path: string, body: object, setBusy: (b: boolean) => void) {
+    setFormError("");
+    setBusy(true);
     try {
-      await api(`/auth/${mode}`, { method: "POST", body: JSON.stringify(form) });
-      router.push("/dashboard");
+      await api(path, { method: "POST", body: JSON.stringify(body) });
+      router.replace("/dashboard");
     } catch (err) {
-      setError(errMsg(err));
-    } finally {
-      setLoading(false);
+      setFormError(errMsg(err));
+      setBusy(false); // keep the button disabled while redirecting; re-enable only on failure
     }
   }
 
-  const input = "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500";
+  function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (loading) return; // double-submit guard
+    const v = validate(mode, form);
+    setErrors(v);
+    if (Object.keys(v).length) return focusFirstInvalid(e.currentTarget);
+    submit(
+      `/auth/${mode}`,
+      { ...form, email: form.email.trim(), name: form.name.trim() },
+      setLoading
+    );
+  }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
-      <form onSubmit={onSubmit} className="w-full max-w-sm space-y-4 rounded-2xl bg-white p-8 shadow">
-        <h1 className="text-2xl font-bold text-gray-900">{isSignup ? "Create account" : "Welcome back"}</h1>
+    <div>
+      <h1 className="text-2xl font-bold tracking-tight">{isSignup ? "Create your account" : "Welcome back"}</h1>
+      <p className="mb-6 mt-1 text-sm text-muted">
+        {isSignup ? "Start invoicing in under a minute. Free for your first 5 invoices." : "Log in to manage your invoices."}
+      </p>
+
+      {params.get("session") === "expired" && !formError && <Alert tone="warning">Your session expired. Please log in again.</Alert>}
+      {formError && <Alert tone="danger">{formError}</Alert>}
+
+      <form onSubmit={onSubmit} noValidate className="space-y-4">
         {isSignup && (
-          <input className={input} placeholder="Name" value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+          <TextField label="Name" autoComplete="name" value={form.name} onChange={set("name")} error={errors.name} maxLength={80} />
         )}
-        <input className={input} type="email" placeholder="Email" value={form.email}
-          onChange={(e) => setForm({ ...form, email: e.target.value })} required />
-        <input className={input} type="password" placeholder="Password (min 8 chars)" value={form.password}
-          onChange={(e) => setForm({ ...form, password: e.target.value })} required />
-        {error && <p className="text-sm text-red-600">{error}</p>}
-        <button disabled={loading}
-          className="w-full rounded-lg bg-indigo-600 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
-          {loading ? "Please wait..." : isSignup ? "Sign up" : "Log in"}
-        </button>
-        <p className="text-center text-sm text-gray-500">
-          {isSignup ? "Already have an account?" : "No account yet?"}{" "}
-          <Link className="text-indigo-600" href={isSignup ? "/login" : "/signup"}>
-            {isSignup ? "Log in" : "Sign up"}
-          </Link>
-        </p>
+        <TextField
+          label="Email"
+          type="email"
+          autoComplete="email"
+          inputMode="email"
+          value={form.email}
+          onChange={set("email")}
+          error={errors.email}
+          maxLength={254}
+        />
+        <PasswordField
+          label="Password"
+          autoComplete={isSignup ? "new-password" : "current-password"}
+          value={form.password}
+          onChange={set("password")}
+          error={errors.password}
+          hint={isSignup ? "At least 8 characters" : undefined}
+          help={isSignup ? "Use 8 to 72 characters. A mix of letters, numbers and symbols is safest." : undefined}
+          maxLength={72}
+        />
+        {!isSignup && (
+          <div className="-mt-2 text-right">
+            <Link href="/forgot-password" className="text-xs font-medium text-primary hover:underline">
+              Forgot password?
+            </Link>
+          </div>
+        )}
+        <Button type="submit" loading={loading} disabled={demoLoading} className="w-full">
+          {loading ? "Please wait..." : isSignup ? "Create account" : "Log in"}
+        </Button>
       </form>
-    </main>
+
+      {!isSignup && (
+        <>
+          <div className="my-5 flex items-center gap-3 text-xs text-muted">
+            <span className="h-px flex-1 bg-line" /> or <span className="h-px flex-1 bg-line" />
+          </div>
+          <Button
+            variant="secondary"
+            className="w-full"
+            loading={demoLoading}
+            disabled={loading}
+            onClick={() => submit("/auth/login", DEMO, setDemoLoading)}
+          >
+            Try the demo account
+          </Button>
+        </>
+      )}
+
+      <p className="mt-6 text-center text-sm text-muted">
+        {isSignup ? "Already have an account?" : "New to InvoiceFlow?"}{" "}
+        <Link className="font-medium text-primary hover:underline" href={isSignup ? "/login" : "/signup"}>
+          {isSignup ? "Log in" : "Create an account"}
+        </Link>
+      </p>
+    </div>
   );
 }

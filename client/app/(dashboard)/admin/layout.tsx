@@ -1,8 +1,8 @@
 "use client";
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { PageHeader, cx } from "@/components/ui";
 import { useUser } from "../layout";
 
 const tabs = [
@@ -25,14 +25,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   return (
     <div>
-      <div className="mb-6 flex gap-2 border-b">
+      <PageHeader title="Admin" description="Manage users and track revenue." />
+      <div className="mb-6 flex gap-1 border-b border-line">
         {tabs.map((t) => (
           <Link
             key={t.href}
             href={t.href}
-            className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
-              pathname === t.href ? "border-indigo-600 text-indigo-700" : "border-transparent text-gray-500 hover:text-gray-800"
-            }`}
+            aria-current={pathname === t.href ? "page" : undefined}
+            className={cx(
+              "-mb-px border-b-2 px-4 py-2 text-sm font-medium",
+              pathname === t.href ? "border-primary text-primary" : "border-transparent text-muted hover:text-fg"
+            )}
           >
             {t.label}
           </Link>

@@ -4,6 +4,8 @@ const Invoice = require("../models/Invoice");
 const Subscription = require("../models/Subscription");
 const { requireAuth } = require("../middleware/auth");
 const { FREE_LIMIT } = require("../middleware/planLimit");
+const { syncSubscription } = require("../lib/stripeSync");
+const User = require("../models/User");
 
 router.use(requireAuth);
 
@@ -34,6 +36,24 @@ router.get("/status", async (req, res, next) => {
         cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
       },
     });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Asks Stripe directly what this user's subscription looks like and updates the plan.
+// Called right after returning from Checkout (and by a "refresh" button), so the plan updates
+// even if the webhook is late, failed, or not running (e.g. local development).
+// Safe: it only reads the Stripe customer that belongs to the logged-in user.
+router.post("/sync", async (req, res, next) => {
+  try {
+    if (req.user.stripeCustomerId) {
+      const subs = await getStripe().subscriptions.list({ customer: req.user.stripeCustomerId, status: "all", limit: 10 });
+      const best = subs.data.find((s) => ["active", "trialing"].includes(s.status)) || subs.data[0];
+      if (best) await syncSubscription(best);
+    }
+    const fresh = await User.findById(req.user._id).select("plan");
+    res.json({ plan: fresh.plan });
   } catch (e) {
     next(e);
   }

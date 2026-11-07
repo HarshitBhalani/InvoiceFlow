@@ -1,225 +1,301 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { api, errMsg } from "@/lib/api";
-import { formatDate, money, useDebounce } from "@/lib/hooks";
-import { Modal, Pagination, StatusBadge, btnGhost, btnPrimary, inputCls } from "@/components/ui";
+import { useRouter, useSearchParams } from "next/navigation";
+import { api, downloadFile, errMsg } from "@/lib/api";
+import { useApi, useDebounce, usePageTitle } from "@/lib/hooks";
+import { daysUntil, formatDate, money } from "@/lib/format";
+import { Icon } from "@/components/Icon";
+import { useConfirm, useToast } from "@/components/providers";
+import InvoiceForm, { type ClientOption, type InvoiceData } from "@/components/InvoiceForm";
+import { SendInvoiceModal } from "@/components/InvoiceActions";
+import {
+  Alert, Button, Card, EmptyState, ErrorState, IconButton, PageHeader, Pagination, SearchInput, SegmentedControl, Skeleton, StatusBadge,
+} from "@/components/ui";
+import { useShell } from "../layout";
 
-type Item = { description: string; quantity: number; unitPrice: number };
-type Client = { _id: string; name: string };
-type Invoice = {
-  _id: string;
-  number: number;
-  clientId: { _id: string; name: string } | null;
-  items: Item[];
-  total: number;
-  status: string;
-  dueDate: string;
-};
-type ListRes = { invoices: Invoice[]; total: number; page: number; pages: number };
+type ListRes = { invoices: InvoiceData[]; total: number; page: number; pages: number };
+const FILTERS = ["all", "draft", "sent", "paid", "overdue"] as const;
+type Filter = (typeof FILTERS)[number];
 
-const STATUSES = ["draft", "sent", "paid", "overdue"];
-const blankItem = (): Item => ({ description: "", quantity: 1, unitPrice: 0 });
-const blankForm = () => ({
-  clientId: "",
-  status: "draft",
-  dueDate: new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10),
-  items: [blankItem()],
-});
+const shownStatus = (inv: InvoiceData) => (inv.isOverdue ? "overdue" : inv.status);
 
-export default function InvoicesPage() {
-  const [data, setData] = useState<ListRes | null>(null);
-  const [clients, setClients] = useState<Client[]>([]);
+function DueText({ inv }: { inv: InvoiceData }) {
+  if (inv.status === "paid") return <span className="text-muted">{formatDate(inv.dueDate)}</span>;
+  const d = daysUntil(inv.dueDate);
+  return (
+    <span>
+      {formatDate(inv.dueDate)}
+      {d < 0 && <span className="block text-xs text-danger">{-d} day{d === -1 ? "" : "s"} late</span>}
+      {d >= 0 && d <= 3 && inv.status !== "draft" && (
+        <span className="block text-xs text-warning">{d === 0 ? "Due today" : `Due in ${d} day${d === 1 ? "" : "s"}`}</span>
+      )}
+    </span>
+  );
+}
+
+function InvoicesContent() {
+  usePageTitle("Invoices");
+  const router = useRouter();
+  const params = useSearchParams();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const { user, billing, refreshBilling } = useShell();
+
+  const initialFilter = FILTERS.includes(params.get("status") as Filter) ? (params.get("status") as Filter) : "all";
+  const [filter, setFilter] = useState<Filter>(initialFilter);
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("");
   const [page, setPage] = useState(1);
-  const [error, setError] = useState("");
-  const [editing, setEditing] = useState<Invoice | "new" | null>(null);
-  const [form, setForm] = useState(blankForm());
-  const [saving, setSaving] = useState(false);
+  type Editing = InvoiceData | "new" | { copy: InvoiceData } | null;
+  const [editing, setEditing] = useState<Editing>(null);
+  const [exporting, setExporting] = useState(false);
+  const [sending, setSending] = useState<InvoiceData | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const q = useDebounce(search);
+  const openedFromUrl = useRef(false);
 
-  const load = useCallback(async () => {
-    try {
-      const qs = `page=${page}&search=${encodeURIComponent(q)}&status=${status}`;
-      setData(await api<ListRes>(`/invoices?${qs}`));
-    } catch (e) {
-      setError(errMsg(e));
-    }
-  }, [page, q, status]);
+  useEffect(() => { setPage(1); }, [q, filter]);
 
-  useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(1); }, [q, status]);
+  const path = `/invoices?page=${page}&limit=10&search=${encodeURIComponent(q)}&status=${filter === "all" ? "" : filter}`;
+  const { data, error, loading, reload } = useApi<ListRes>(path);
+  const clientsRes = useApi<{ clients: ClientOption[] }>("/clients/options");
+  const clients = clientsRes.data?.clients ?? [];
+
+  const atLimit = !!billing && billing.plan === "free" && billing.usage.limit !== null && billing.usage.invoices >= billing.usage.limit;
+
+  // "New invoice" shortcut from the dashboard (/invoices?new=1)
   useEffect(() => {
-    api<{ clients: Client[] }>("/clients?limit=50").then((d) => setClients(d.clients)).catch(() => {});
-  }, []);
-
-  function open(inv: Invoice | "new") {
-    setError("");
-    if (inv === "new") setForm(blankForm());
-    else
-      setForm({
-        clientId: inv.clientId?._id || "",
-        status: inv.status,
-        dueDate: inv.dueDate.slice(0, 10),
-        items: inv.items.map((i) => ({ ...i })),
-      });
-    setEditing(inv);
-  }
-
-  const setItem = (idx: number, patch: Partial<Item>) =>
-    setForm({ ...form, items: form.items.map((it, i) => (i === idx ? { ...it, ...patch } : it)) });
-
-  const formTotal = form.items.reduce((s, i) => s + (Number(i.quantity) || 0) * (Number(i.unitPrice) || 0), 0);
-
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true);
-    setError("");
-    try {
-      const isNew = editing === "new";
-      await api(isNew ? "/invoices" : `/invoices/${(editing as Invoice)._id}`, {
-        method: isNew ? "POST" : "PUT",
-        body: JSON.stringify(form),
-      });
-      setEditing(null);
-      load();
-    } catch (err) {
-      setError(errMsg(err));
-    } finally {
-      setSaving(false);
+    if (params.get("new") === "1" && clientsRes.data && !openedFromUrl.current) {
+      openedFromUrl.current = true;
+      router.replace("/invoices");
+      if (clientsRes.data.clients.length > 0 && !atLimit) setEditing("new");
     }
+  }, [params, clientsRes.data, atLimit, router]);
+
+  function startNew() {
+    if (atLimit) return;
+    if (clients.length === 0) {
+      toast.info("Add a client first, then you can create invoices.");
+      router.push("/clients");
+      return;
+    }
+    setEditing("new");
   }
 
-  async function changeStatus(inv: Invoice, s: string) {
+  async function exportCsv() {
+    setExporting(true);
     try {
-      await api(`/invoices/${inv._id}/status`, { method: "PATCH", body: JSON.stringify({ status: s }) });
-      load();
+      await downloadFile("/invoices/export", "invoices.csv");
+      toast.success("Invoices exported");
     } catch (e) {
-      alert(errMsg(e));
+      toast.error(errMsg(e));
+    } finally {
+      setExporting(false);
     }
   }
 
-  async function remove(inv: Invoice) {
-    if (!confirm(`Delete invoice #${inv.number}?`)) return;
+  async function markPaid(inv: InvoiceData) {
+    setBusyId(inv._id);
+    try {
+      await api(`/invoices/${inv._id}/status`, { method: "PATCH", body: JSON.stringify({ status: "paid" }) });
+      toast.success(`Invoice #${inv.number} marked as paid`);
+      reload();
+    } catch (e) {
+      toast.error(errMsg(e));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function remove(inv: InvoiceData) {
+    const ok = await confirm({
+      title: `Delete invoice #${inv.number}?`,
+      message: "This cannot be undone.",
+      confirmText: "Delete invoice",
+      danger: true,
+    });
+    if (!ok) return;
+    setBusyId(inv._id);
     try {
       await api(`/invoices/${inv._id}`, { method: "DELETE" });
-      load();
+      toast.success("Invoice deleted");
+      refreshBilling();
+      if (data && data.invoices.length === 1 && page > 1) setPage(page - 1);
+      else reload();
     } catch (e) {
-      alert(errMsg(e));
+      toast.error(errMsg(e));
+    } finally {
+      setBusyId(null);
     }
   }
+
+  const isFiltering = q.trim() !== "" || filter !== "all";
+  const rowActions = (inv: InvoiceData) => (
+    <div className="flex items-center justify-end">
+      {inv.status !== "paid" && (
+        <IconButton icon="send" label={`Email invoice ${inv.number} to the client`} onClick={() => setSending(inv)} />
+      )}
+      {inv.status !== "paid" && (
+        <IconButton icon="checkCircle" label={`Mark invoice ${inv.number} as paid`} disabled={busyId === inv._id} onClick={() => markPaid(inv)} />
+      )}
+      <IconButton
+        icon="copy"
+        label={atLimit ? "Upgrade to duplicate" : `Duplicate invoice ${inv.number}`}
+        disabled={atLimit}
+        onClick={() => setEditing({ copy: inv })}
+      />
+      <IconButton icon="pencil" label={`Edit invoice ${inv.number}`} onClick={() => setEditing(inv)} />
+      <IconButton icon="trash" tone="danger" label={`Delete invoice ${inv.number}`} disabled={busyId === inv._id} onClick={() => remove(inv)} />
+    </div>
+  );
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">Invoices</h1>
-        <button className={btnPrimary} onClick={() => open("new")} disabled={clients.length === 0}
-          title={clients.length === 0 ? "Add a client first" : ""}>
-          + New invoice
-        </button>
-      </div>
-      {clients.length === 0 && (
-        <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Add a client first to create invoices.</p>
-      )}
-      <div className="mb-4 flex flex-wrap gap-3">
-        <input className={`${inputCls} max-w-xs`} placeholder="Search client or invoice #"
-          value={search} onChange={(e) => setSearch(e.target.value)} />
-        <select className={`${inputCls} max-w-[10rem]`} value={status} onChange={(e) => setStatus(e.target.value)}>
-          <option value="">All statuses</option>
-          {STATUSES.map((s) => <option key={s} value={s} className="capitalize">{s}</option>)}
-        </select>
-      </div>
-      {error && !editing && <p className="mb-2 text-sm text-red-600">{error}</p>}
-
-      <div className="overflow-x-auto rounded-xl border bg-white">
-        <table className="w-full text-left text-sm">
-          <thead className="border-b bg-gray-50 text-gray-500">
-            <tr>
-              <th className="p-3">#</th><th className="p-3">Client</th><th className="p-3">Total</th>
-              <th className="p-3">Due</th><th className="p-3">Status</th><th className="p-3" />
-            </tr>
-          </thead>
-          <tbody>
-            {!data && <tr><td className="p-4 text-gray-500" colSpan={6}>Loading...</td></tr>}
-            {data?.invoices.length === 0 && (
-              <tr><td className="p-6 text-center text-gray-500" colSpan={6}>No invoices found.</td></tr>
+      <PageHeader
+        title="Invoices"
+        description={
+          billing?.plan === "free" && billing.usage.limit !== null
+            ? `${billing.usage.invoices} of ${billing.usage.limit} free invoices used`
+            : "Create, send and track your invoices."
+        }
+        actions={
+          <>
+            <Button variant="secondary" onClick={exportCsv} loading={exporting} disabled={!data || data.total === 0}>
+              <Icon name="download" /> Export CSV
+            </Button>
+            {atLimit ? (
+            <Link href="/billing" className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-fg hover:bg-primary-hover">
+              <Icon name="zap" /> Upgrade for more
+            </Link>
+          ) : (
+            <Button onClick={startNew}><Icon name="plus" /> New invoice</Button>
             )}
-            {data?.invoices.map((inv) => (
-              <tr key={inv._id} className="border-b last:border-0">
-                <td className="p-3 font-medium">#{inv.number}</td>
-                <td className="p-3">{inv.clientId?.name || "Deleted client"}</td>
-                <td className="p-3">{money(inv.total)}</td>
-                <td className="p-3">{formatDate(inv.dueDate)}</td>
-                <td className="p-3">
-                  <select value={inv.status} onChange={(e) => changeStatus(inv, e.target.value)}
-                    className="rounded border-0 bg-transparent text-xs" aria-label="Change status">
-                    {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                  <StatusBadge status={inv.status} />
-                </td>
-                <td className="space-x-3 p-3 text-right">
-                  <button className="text-indigo-600 hover:underline" onClick={() => open(inv)}>Edit</button>
-                  <button className="text-red-600 hover:underline" onClick={() => remove(inv)}>Delete</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+          </>
+        }
+      />
+
+      {atLimit && (
+        <Alert tone="warning" action={<Link href="/billing" className="font-semibold underline">Upgrade to Pro</Link>}>
+          You have used all your free invoices. Upgrade to create unlimited invoices.
+        </Alert>
+      )}
+
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <SearchInput value={search} onChange={setSearch} placeholder="Search client or invoice #" />
+        <SegmentedControl
+          value={filter}
+          onChange={setFilter}
+          options={FILTERS.map((f) => ({ value: f, label: f[0].toUpperCase() + f.slice(1) }))}
+        />
       </div>
-      {data && <Pagination page={data.page} pages={data.pages} onChange={setPage} />}
+
+      {error && <ErrorState message={error} onRetry={reload} />}
+
+      <Card className="overflow-hidden">
+        {!data && !error && <div className="space-y-3 p-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-12" />)}</div>}
+
+        {data && data.invoices.length === 0 && (
+          <EmptyState
+            icon="fileText"
+            title={isFiltering ? "No invoices match" : "No invoices yet"}
+            description={isFiltering ? "Try another search or filter." : clients.length === 0 ? "Add a client first, then create your first invoice." : "Create your first invoice to get started."}
+            action={
+              !isFiltering && !atLimit && (
+                <Button onClick={startNew}><Icon name="plus" /> {clients.length === 0 ? "Add a client" : "New invoice"}</Button>
+              )
+            }
+          />
+        )}
+
+        {data && data.invoices.length > 0 && (
+          <div className={loading ? "opacity-60 transition-opacity" : "transition-opacity"}>
+            <table className="hidden w-full text-left text-sm md:table">
+              <thead className="border-b border-line bg-surface-2 text-xs uppercase tracking-wide text-muted">
+                <tr>
+                  <th className="px-4 py-3 font-medium">Invoice</th>
+                  <th className="px-4 py-3 font-medium">Client</th>
+                  <th className="px-4 py-3 font-medium">Due</th>
+                  <th className="px-4 py-3 font-medium">Status</th>
+                  <th className="px-4 py-3 text-right font-medium">Amount</th>
+                  <th className="px-4 py-3" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {data.invoices.map((inv) => (
+                  <tr key={inv._id} className="hover:bg-surface-2/60">
+                    <td className="px-4 py-3">
+                      <Link href={`/invoices/${inv._id}`} className="font-medium text-primary hover:underline">#{inv.number}</Link>
+                    </td>
+                    <td className="max-w-48 truncate px-4 py-3">{inv.clientId?.name || <span className="text-muted">Deleted client</span>}</td>
+                    <td className="px-4 py-3"><DueText inv={inv} /></td>
+                    <td className="px-4 py-3"><StatusBadge status={shownStatus(inv)} /></td>
+                    <td className="px-4 py-3 text-right font-medium tabular-nums">{money(inv.total, inv.currency || user.currency)}</td>
+                    <td className="px-4 py-3">{rowActions(inv)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <ul className="divide-y divide-line md:hidden">
+              {data.invoices.map((inv) => (
+                <li key={inv._id} className="p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <Link href={`/invoices/${inv._id}`} className="min-w-0">
+                      <p className="font-medium text-primary">#{inv.number}</p>
+                      <p className="truncate text-sm">{inv.clientId?.name || "Deleted client"}</p>
+                    </Link>
+                    <div className="text-right">
+                      <p className="font-semibold tabular-nums">{money(inv.total, inv.currency || user.currency)}</p>
+                      <StatusBadge status={shownStatus(inv)} />
+                    </div>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between text-xs text-muted">
+                    <DueText inv={inv} />
+                    {rowActions(inv)}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {data && <Pagination page={data.page} pages={data.pages} total={data.total} onChange={setPage} />}
+      </Card>
 
       {editing && (
-        <Modal title={editing === "new" ? "New invoice" : `Edit invoice #${(editing as Invoice).number}`}
-          onClose={() => setEditing(null)}>
-          <form onSubmit={save} className="space-y-3">
-            <select className={inputCls} value={form.clientId} required
-              onChange={(e) => setForm({ ...form, clientId: e.target.value })}>
-              <option value="">Select client...</option>
-              {clients.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
-            </select>
-            <div className="flex gap-3">
-              <input className={inputCls} type="date" value={form.dueDate} required
-                onChange={(e) => setForm({ ...form, dueDate: e.target.value })} />
-              <select className={inputCls} value={form.status}
-                onChange={(e) => setForm({ ...form, status: e.target.value })}>
-                {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
-
-            <p className="pt-2 text-sm font-medium text-gray-700">Line items</p>
-            {form.items.map((it, idx) => (
-              <div key={idx} className="flex gap-2">
-                <input className={inputCls} placeholder="Description" value={it.description} required
-                  onChange={(e) => setItem(idx, { description: e.target.value })} />
-                <input className={`${inputCls} w-16`} type="number" min={1} value={it.quantity} required
-                  onChange={(e) => setItem(idx, { quantity: Number(e.target.value) })} aria-label="Quantity" />
-                <input className={`${inputCls} w-24`} type="number" min={0} step="0.01" value={it.unitPrice} required
-                  onChange={(e) => setItem(idx, { unitPrice: Number(e.target.value) })} aria-label="Unit price" />
-                {form.items.length > 1 && (
-                  <button type="button" className="text-red-500"
-                    onClick={() => setForm({ ...form, items: form.items.filter((_, i) => i !== idx) })}
-                    aria-label="Remove item">✕</button>
-                )}
-              </div>
-            ))}
-            <button type="button" className="text-sm text-indigo-600 hover:underline"
-              onClick={() => setForm({ ...form, items: [...form.items, blankItem()] })}>+ Add item</button>
-
-            <p className="text-right text-sm font-semibold">Total: {money(formTotal)}</p>
-            {error && (
-              <p className="text-sm text-red-600">
-                {error}{" "}
-                {error.includes("limit") && <Link href="/billing" className="font-semibold underline">Upgrade</Link>}
-              </p>
-            )}
-            <div className="flex justify-end gap-2">
-              <button type="button" className={btnGhost} onClick={() => setEditing(null)}>Cancel</button>
-              <button className={btnPrimary} disabled={saving}>{saving ? "Saving..." : "Save"}</button>
-            </div>
-          </form>
-        </Modal>
+        <InvoiceForm
+          invoice={editing === "new" || "copy" in editing ? null : editing}
+          copyFrom={typeof editing === "object" && "copy" in editing ? editing.copy : null}
+          clients={clients}
+          currency={user.currency}
+          defaultTaxRate={user.defaultTaxRate}
+          onClose={() => setEditing(null)}
+          onSaved={(inv) => {
+            const isNew = editing === "new" || (typeof editing === "object" && "copy" in editing);
+            setEditing(null);
+            toast.success(isNew ? `Invoice #${inv.number} created` : "Invoice updated");
+            refreshBilling();
+            reload();
+          }}
+        />
+      )}
+      {sending && (
+        <SendInvoiceModal
+          invoice={sending}
+          onClose={() => setSending(null)}
+          onSent={() => {
+            setSending(null);
+            reload();
+          }}
+        />
       )}
     </div>
+  );
+}
+
+export default function InvoicesPage() {
+  return (
+    <Suspense>
+      <InvoicesContent />
+    </Suspense>
   );
 }

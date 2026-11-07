@@ -9,7 +9,10 @@ const Client = require("./models/Client");
 const Invoice = require("./models/Invoice");
 const Subscription = require("./models/Subscription");
 
-const ADMIN = { name: "Admin", email: "admin@invoiceflow.com", password: "admin1234" };
+// The admin can ban users and see all accounts, so its password is never hard-coded.
+// Set SEED_ADMIN_PASSWORD, or a random one is generated and printed once.
+const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD || require("crypto").randomBytes(12).toString("base64url");
+const ADMIN = { name: "Admin", email: "admin@invoiceflow.com", password: ADMIN_PASSWORD };
 const DEMO = { name: "Demo User", email: "demo@invoiceflow.com", password: "demo1234" };
 const SEED_DOMAIN = "@seed.invoiceflow.test";
 
@@ -58,7 +61,7 @@ async function main() {
       // Older invoices are mostly paid; recent ones are a mix
       const status = monthsBack >= 2 ? pick(["paid", "paid", "paid", "overdue"]) : pick(["paid", "sent", "sent", "draft", "overdue"]);
       invoices.push({
-        userId: demo._id, clientId: pick(clients)._id, number: number++, items, total, status, dueDate: due,
+        userId: demo._id, clientId: pick(clients)._id, number: number++, items, currency: "USD", subtotal: total, taxAmount: 0, total, status, dueDate: due,
         createdAt: created, ...(status === "paid" ? { paidAt: new Date(created.getTime() + rand(2, 12) * DAY) } : {}),
       });
     }
