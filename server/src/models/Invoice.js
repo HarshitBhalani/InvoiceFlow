@@ -18,6 +18,7 @@ const invoiceSchema = new mongoose.Schema(
     total: { type: Number, required: true },
     status: { type: String, enum: ["draft", "sent", "paid", "overdue"], default: "draft" },
     dueDate: { type: Date, required: true },
+    paidAt: { type: Date }, // set when status becomes "paid"; drives the revenue chart
   },
   { timestamps: true }
 );

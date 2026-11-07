@@ -26,6 +26,9 @@ const schema = z.object({
 const calcTotal = (items) =>
   Math.round(items.reduce((s, i) => s + i.quantity * i.unitPrice, 0) * 100) / 100;
 
+// paidAt follows status: set when paid, cleared otherwise
+const paidFields = (status) => (status === "paid" ? { paidAt: new Date() } : { paidAt: null });
+
 const badId = (res) => res.status(404).json({ error: "Not found" });
 
 router.use(requireAuth);
@@ -77,6 +80,7 @@ router.post("/", async (req, res, next) => {
       userId: req.user._id,
       number: (last?.number || 0) + 1,
       total: calcTotal(data.items),
+      ...(data.status === "paid" ? paidFields("paid") : {}),
     });
     res.status(201).json({ invoice });
   } catch (e) {
@@ -90,9 +94,13 @@ router.put("/:id", async (req, res, next) => {
     const data = schema.parse(req.body);
     const client = await Client.findOne({ _id: data.clientId, userId: req.user._id });
     if (!client) return res.status(400).json({ error: "Client not found" });
+    const existing = await Invoice.findOne({ _id: req.params.id, userId: req.user._id }).select("status");
+    if (!existing) return res.status(404).json({ error: "Invoice not found" });
+    const nextStatus = data.status || existing.status;
+    const statusChanged = nextStatus !== existing.status;
     const invoice = await Invoice.findOneAndUpdate(
       { _id: req.params.id, userId: req.user._id },
-      { ...data, total: calcTotal(data.items) },
+      { ...data, total: calcTotal(data.items), ...(statusChanged ? paidFields(nextStatus) : {}) },
       { new: true }
     );
     if (!invoice) return res.status(404).json({ error: "Invoice not found" });
@@ -106,9 +114,11 @@ router.patch("/:id/status", async (req, res, next) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) return badId(res);
     const { status } = z.object({ status: z.enum(STATUSES) }).parse(req.body);
+    const existing = await Invoice.findOne({ _id: req.params.id, userId: req.user._id }).select("status");
+    if (!existing) return res.status(404).json({ error: "Invoice not found" });
     const invoice = await Invoice.findOneAndUpdate(
       { _id: req.params.id, userId: req.user._id },
-      { status },
+      { status, ...(status !== existing.status ? paidFields(status) : {}) },
       { new: true }
     );
     if (!invoice) return res.status(404).json({ error: "Invoice not found" });

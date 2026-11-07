@@ -20,6 +20,7 @@ app.get("/api/health", (req, res) => res.json({ ok: true }));
 app.use("/api/auth", require("./routes/auth"));
 app.use("/api/clients", require("./routes/clients"));
 app.use("/api/invoices", require("./routes/invoices"));
+app.use("/api/dashboard", require("./routes/dashboard"));
 
 app.use((err, req, res, next) => {
   if (err instanceof ZodError) {
