@@ -77,10 +77,7 @@ export const themeScript = `(function(){try{var t=localStorage.getItem('theme');
 
 export function Logo({ className = "" }: { className?: string }) {
   return (
-    <span className={`inline-flex items-center gap-2 font-bold tracking-tight ${className}`}>
-      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-fg">
-        <Icon name="fileText" className="h-4 w-4" />
-      </span>
+    <span className={`inline-flex items-center font-bold tracking-tight ${className}`}>
       InvoiceFlow
     </span>
   );

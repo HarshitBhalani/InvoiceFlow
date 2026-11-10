@@ -99,7 +99,7 @@ const sections: Section[] = [
           ]}
         />
         <p>Prefer WhatsApp or another app? Use <b>Copy link</b> and share the invoice link yourself. Anyone with the link can view and pay that one invoice, so only share it with your client.</p>
-        <Note tone="warning">Payments are processed by Stripe. In the test version of this app no real money moves. Use the test card 4242 4242 4242 4242.</Note>
+        <Note>Payments are processed securely by Stripe. Card details go straight to Stripe and are never stored by InvoiceFlow.</Note>
       </>
     ),
   },

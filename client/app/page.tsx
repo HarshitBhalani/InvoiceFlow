@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Icon, type IconName } from "@/components/Icon";
 import { Logo, ThemeToggle } from "@/components/ThemeToggle";
 import { AuthCta } from "@/components/AuthCta";
+import { HeroPreview } from "@/components/HeroPreview";
 
 const features: { icon: IconName; title: string; text: string }[] = [
   { icon: "fileText", title: "Professional invoices", text: "Add line items, set a due date and get totals calculated for you. No spreadsheets, no mistakes." },
@@ -77,26 +78,8 @@ export default function Home() {
             <span className="italic">No credit card needed</span>
           </p>
 
-          {/* Static product preview */}
-          <div className="mx-auto mt-14 max-w-4xl rounded-2xl border border-line bg-surface p-4 text-left shadow-xl md:p-6" aria-hidden="true">
-            <div className="grid gap-3 sm:grid-cols-3">
-              {[
-                ["Revenue", "$12,480", "text-success"],
-                ["Pending", "$3,200", "text-info"],
-                ["Overdue", "$850", "text-danger"],
-              ].map(([l, v, c]) => (
-                <div key={l} className="rounded-lg border border-line p-4">
-                  <p className="text-xs text-muted">{l}</p>
-                  <p className={`mt-1 text-2xl font-bold ${c}`}>{v}</p>
-                </div>
-              ))}
-            </div>
-            <div className="mt-3 flex h-36 items-end gap-2 rounded-lg border border-line p-4 md:h-44">
-              {[30, 45, 38, 60, 52, 80].map((h, i) => (
-                <div key={i} className="flex-1 rounded-t bg-primary/80" style={{ height: `${h}%` }} />
-              ))}
-            </div>
-          </div>
+          {/* Interactive product preview */}
+          <HeroPreview />
         </section>
 
         {/* Features */}
